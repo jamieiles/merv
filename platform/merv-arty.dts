@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: GPL-2.0+
+// merv on the Arty S7-50, see fpga/xilinx/MervArtyBD.tcl for the memory map.
+/dts-v1/;
+
+/ {
+    #address-cells = <1>;
+    #size-cells = <1>;
+    compatible = "jamieiles,merv-arty";
+    model = "merv Arty S7-50";
+
+    aliases {
+        serial0 = &uart0;
+    };
+
+    chosen {
+        // The core is slow enough that systemd's default unit start timeouts
+        // expire (udevd coldplug in particular), and there is no network
+        // configuration so the networking services are masked.
+        bootargs = "console=ttyS0,115200 earlycon root=/dev/mmcblk0p2 ro systemd.default_timeout_start_sec=900 systemd.mask=systemd-networkd.service systemd.mask=systemd-networkd-wait-online.service systemd.mask=systemd-resolved.service systemd.mask=systemd-timesyncd.service systemd.mask=NetworkManager.service systemd.mask=NetworkManager-wait-online.service";
+        stdout-path = "serial0:115200n8";
+    };
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        timebase-frequency = <10140625>;
+
+        cpu0: cpu@0 {
+            device_type = "cpu";
+            reg = <0>;
+            status = "okay";
+            compatible = "jamieiles,merv", "riscv";
+            riscv,isa = "rv32ima_zicsr_zifencei_zicntr";
+            riscv,isa-base = "rv32i";
+            riscv,isa-extensions = "i", "m", "a", "zicsr", "zifencei",
+                                   "zicntr";
+            mmu-type = "riscv,sv32";
+
+            cpu0_intc: interrupt-controller {
+                #interrupt-cells = <1>;
+                interrupt-controller;
+                compatible = "riscv,cpu-intc";
+            };
+        };
+    };
+
+    memory@80000000 {
+        device_type = "memory";
+        reg = <0x80000000 0x10000000>;
+    };
+
+    sdclk: clock-81247969 {
+        compatible = "fixed-clock";
+        #clock-cells = <0>;
+        clock-frequency = <81247969>;
+    };
+
+    soc {
+        #address-cells = <1>;
+        #size-cells = <1>;
+        compatible = "simple-bus";
+        ranges;
+
+        clint0: clint@f0000000 {
+            compatible = "sifive,clint0", "riscv,clint0";
+            interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
+            reg = <0xf0000000 0xc000>;
+        };
+
+        syscon: syscon@f000c000 {
+            compatible = "syscon";
+            reg = <0xf000c000 0x1000>;
+
+            reboot {
+                compatible = "syscon-reboot";
+                regmap = <&syscon>;
+                offset = <0x0>;
+                mask = <0x1>;
+                value = <0x1>;
+            };
+        };
+
+        plic: interrupt-controller@f8000000 {
+            compatible = "sifive,plic-1.0.0", "riscv,plic0";
+            #address-cells = <0>;
+            #interrupt-cells = <1>;
+            interrupt-controller;
+            reg = <0xf8000000 0x400000>;
+            interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;
+            riscv,ndev = <4>;
+        };
+
+        mmc0: mmc@fffc0000 {
+            compatible = "arasan,sdhci-8.9a";
+            reg = <0xfffc0000 0x10000>;
+            clocks = <&sdclk>, <&sdclk>;
+            clock-names = "clk_xin", "clk_ahb";
+            // No caches: SDMA is coherent with the CPU.
+            interrupt-parent = <&plic>;
+            interrupts = <4>;
+            bus-width = <4>;
+            cap-sd-highspeed;
+            max-frequency = <40623984>;
+            no-1-8-v;
+            disable-wp;
+            no-sdio;
+            no-mmc;
+            broken-cd;
+        };
+
+        spi0: spi@fffe0000 {
+            compatible = "xlnx,xps-spi-2.00.a";
+            reg = <0xfffe0000 0x10000>;
+            xlnx,num-ss-bits = <0x1>;
+            xlnx,num-transfer-bits = <8>;
+            #address-cells = <1>;
+            #size-cells = <0>;
+            interrupt-parent = <&plic>;
+            interrupts = <1>;
+
+            eth0: eth@0 {
+                compatible = "microchip,enc28j60";
+                reg = <0>;
+                interrupt-parent = <&plic>;
+                // Falling edge, latched until claimed by PLICAXI.
+                interrupts = <3>;
+                spi-max-frequency = <50000000>;
+            };
+        };
+
+        uart0: serial@ffff1000 {
+            compatible = "ns16550a";
+            reg = <0xffff1000 0x1000>;
+            clock-frequency = <81247969>;
+            reg-shift = <2>;
+            reg-io-width = <4>;
+            interrupt-parent = <&plic>;
+            interrupts = <2>;
+            current-speed = <115200>;
+        };
+    };
+};

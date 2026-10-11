@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: GPL-2.0+
+// Reference simulation platform for merv-sim.  Preprocessed with cpp:
+// INITRD_START/INITRD_END locate the preloaded initramfs.
+/dts-v1/;
+
+/ {
+    #address-cells = <1>;
+    #size-cells = <1>;
+    compatible = "jamieiles,merv-sim";
+    model = "merv simulator";
+
+    aliases {
+        serial0 = &uart0;
+    };
+
+    chosen {
+        bootargs = "earlycon console=ttyS0,115200 rdinit=/init";
+        stdout-path = "serial0:115200n8";
+        linux,initrd-start = <INITRD_START>;
+        linux,initrd-end = <INITRD_END>;
+    };
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        timebase-frequency = <10000000>;
+
+        cpu0: cpu@0 {
+            device_type = "cpu";
+            reg = <0>;
+            status = "okay";
+            compatible = "jamieiles,merv", "riscv";
+            riscv,isa = "rv32ima_zicsr_zifencei_zicntr";
+            riscv,isa-base = "rv32i";
+            riscv,isa-extensions = "i", "m", "a", "zicsr", "zifencei",
+                                   "zicntr";
+            mmu-type = "riscv,sv32";
+
+            cpu0_intc: interrupt-controller {
+                #interrupt-cells = <1>;
+                interrupt-controller;
+                compatible = "riscv,cpu-intc";
+            };
+        };
+    };
+
+    memory@80000000 {
+        device_type = "memory";
+        reg = <0x80000000 0x08000000>;
+    };
+
+    poweroff {
+        compatible = "syscon-poweroff";
+        regmap = <&syscon>;
+        offset = <0x0>;
+        value = <0x5555>;
+    };
+
+    reboot {
+        compatible = "syscon-reboot";
+        regmap = <&syscon>;
+        offset = <0x0>;
+        value = <0x7777>;
+    };
+
+    soc {
+        #address-cells = <1>;
+        #size-cells = <1>;
+        compatible = "simple-bus";
+        ranges;
+
+        clint0: clint@f0000000 {
+            compatible = "sifive,clint0", "riscv,clint0";
+            interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
+            reg = <0xf0000000 0xc000>;
+        };
+
+        syscon: syscon@f000c000 {
+            compatible = "sifive,test1", "sifive,test0", "syscon";
+            reg = <0xf000c000 0x1000>;
+        };
+
+        plic: interrupt-controller@f8000000 {
+            compatible = "sifive,plic-1.0.0", "riscv,plic0";
+            #address-cells = <0>;
+            #interrupt-cells = <1>;
+            interrupt-controller;
+            reg = <0xf8000000 0x400000>;
+            interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;
+            riscv,ndev = <31>;
+        };
+
+        uart0: serial@ffff1000 {
+            compatible = "ns16550a";
+            reg = <0xffff1000 0x1000>;
+            clock-frequency = <1843200>;
+            reg-shift = <2>;
+            reg-io-width = <4>;
+            interrupt-parent = <&plic>;
+            interrupts = <1>;
+            current-speed = <115200>;
+        };
+    };
+};

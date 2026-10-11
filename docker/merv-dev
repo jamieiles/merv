@@ -1,0 +1,24 @@
+#!/bin/bash
+# Run a command (or a shell) in the merv development container with the
+# repository mounted at the same path.
+#
+#   docker/merv-dev ninja -C _build
+#
+# DOCKER_INTERACTIVE_FLAGS= runs without a PTY (e.g. from scripts).
+set -e
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOP="$(dirname "$HERE")"
+IMAGE="${MERV_DEV_IMAGE:-merv-dev}"
+
+if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
+    docker build -t "$IMAGE" "$HERE"
+fi
+
+if [ -z ${DOCKER_INTERACTIVE_FLAGS+x} ]; then
+    DOCKER_INTERACTIVE_FLAGS="-it"
+fi
+
+exec docker run --rm $DOCKER_INTERACTIVE_FLAGS \
+    -u "$(id -u):$(id -g)" \
+    -v "$TOP:$TOP" -v "$HOME/src/linux:$HOME/src/linux:ro" \
+    -w "$PWD" "$IMAGE" "${@:-bash}"

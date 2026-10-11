@@ -1,0 +1,4 @@
+_build/
+Testing/
+.vscode/
+__pycache__/

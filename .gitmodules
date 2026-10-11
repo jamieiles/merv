@@ -1,0 +1,9 @@
+[submodule "vendor/googletest"]
+	path = vendor/googletest
+	url = https://github.com/google/googletest.git
+[submodule "vendor/riscv-arch-test"]
+	path = vendor/riscv-arch-test
+	url = https://github.com/riscv-non-isa/riscv-arch-test.git
+[submodule "vendor/riscv-tests"]
+	path = vendor/riscv-tests
+	url = https://github.com/riscv-software-src/riscv-tests.git

@@ -1,0 +1,1 @@
+include $(TARGETDIR)/$(RISCV_TARGET)/device/rv32i_m/common.mk

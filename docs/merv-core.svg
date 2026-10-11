@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="700" viewBox="0 0 1120 700" font-family="Helvetica, Arial, sans-serif">
+<title>merv core block diagram</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker><marker id="ahs" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#333"/></marker></defs>
+<rect width="1120" height="700" fill="#ffffff"/>
+<text x="560" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#222">MervCore</text>
+<text x="560" y="52" text-anchor="middle" font-size="13" font-weight="normal" fill="#444">RV32IMA, M/S/U + F (millicode) mode, Sv32, multi-cycle, one AXI4 port</text>
+<rect x="130" y="70" width="780" height="590" rx="12" fill="none" stroke="#888" stroke-width="1.4" stroke-dasharray="8 5"/>
+<text x="142" y="90" font-size="13" font-weight="600" fill="#666">MervCore</text>
+<rect x="150" y="100" width="230" height="150" rx="8" fill="#e8f0fb" stroke="#3b6fb6" stroke-width="1.6"/>
+<text x="265.0" y="121" text-anchor="middle" font-size="15" font-weight="600" fill="#3b6fb6">Control</text>
+<text x="265.0" y="145" text-anchor="middle" font-size="12" fill="#222">one-hot state machine</text>
+<text x="265.0" y="161" text-anchor="middle" font-size="12" fill="#222">FETCH → DECODE → EXEC</text>
+<text x="265.0" y="177" text-anchor="middle" font-size="12" fill="#222">→ MEM → WB</text>
+<text x="265.0" y="193" text-anchor="middle" font-size="12" fill="#222">MUL · DIV · CSR · TRAP · FRET · WFI</text>
+<text x="265.0" y="209" text-anchor="middle" font-size="12" fill="#222">registered ALU control word</text>
+<rect x="150" y="270" width="230" height="170" rx="8" fill="#f2ebfa" stroke="#7a4bb3" stroke-width="1.6"/>
+<text x="265.0" y="291" text-anchor="middle" font-size="15" font-weight="600" fill="#7a4bb3">Trap and F event logic</text>
+<text x="265.0" y="315" text-anchor="middle" font-size="12" fill="#222">M/S traps, medeleg/mideleg</text>
+<text x="265.0" y="331" text-anchor="middle" font-size="12" fill="#222">F events (to millicode):</text>
+<text x="265.0" y="347" text-anchor="middle" font-size="12" fill="#222">reset · TLB miss · sfence.vma</text>
+<text x="265.0" y="363" text-anchor="middle" font-size="12" fill="#222">mcycle/minstret wrap</text>
+<text x="265.0" y="379" text-anchor="middle" font-size="12" fill="#222">CSR / instruction emulation</text>
+<text x="265.0" y="395" text-anchor="middle" font-size="12" fill="#222">finject → fault into M/S</text>
+<rect x="150" y="460" width="230" height="180" rx="8" fill="#e8f0fb" stroke="#3b6fb6" stroke-width="1.6"/>
+<text x="265.0" y="481" text-anchor="middle" font-size="15" font-weight="600" fill="#3b6fb6">CSRs in flops</text>
+<text x="265.0" y="505" text-anchor="middle" font-size="12" fill="#222">mstatus · mie · mip</text>
+<text x="265.0" y="521" text-anchor="middle" font-size="12" fill="#222">medeleg · mideleg · counteren</text>
+<text x="265.0" y="537" text-anchor="middle" font-size="12" fill="#222">mcycle · minstret (32-bit)</text>
+<text x="265.0" y="553" text-anchor="middle" font-size="12" fill="#222">fstatus · fcause · finject</text>
+<text x="265.0" y="569" text-anchor="middle" font-size="12" fill="#222">ftlbidx · ftlbhi · ftlblo</text>
+<text x="265.0" y="585" text-anchor="middle" font-size="12" fill="#222">LR/SC reservation</text>
+<rect x="410" y="100" width="250" height="190" rx="8" fill="#e9f6ec" stroke="#2f8a46" stroke-width="1.6"/>
+<text x="535.0" y="121" text-anchor="middle" font-size="15" font-weight="600" fill="#2f8a46">F-RAM + register file</text>
+<text x="535.0" y="145" text-anchor="middle" font-size="12" fill="#222">one dual port BRAM, 2048 × 32</text>
+<text x="535.0" y="161" text-anchor="middle" font-size="12" fill="#222">millicode and data (7.5 KB)</text>
+<text x="535.0" y="177" text-anchor="middle" font-size="12" fill="#222">register window @ 0x1e00:</text>
+<text x="535.0" y="193" text-anchor="middle" font-size="12" fill="#222">bank 0 (U/S/M) · bank 1 (F) GPRs</text>
+<text x="535.0" y="209" text-anchor="middle" font-size="12" fill="#222">{m,s}epc · cause · tval · tvec ·</text>
+<text x="535.0" y="225" text-anchor="middle" font-size="12" fill="#222">scratch · satp · fepc · ftval · fpaddr</text>
+<text x="535.0" y="241" text-anchor="middle" font-size="12" fill="#222">port A: rs1 · port B: rs2 / rd</text>
+<rect x="410" y="320" width="120" height="58" rx="8" fill="#e9f6ec" stroke="#2f8a46" stroke-width="1.6"/>
+<text x="470.0" y="341" text-anchor="middle" font-size="13" font-weight="600" fill="#2f8a46">mux A</text>
+<text x="470.0" y="363" text-anchor="middle" font-size="10" fill="#222">rs1 · pc · res · addr</text>
+<rect x="540" y="320" width="120" height="58" rx="8" fill="#e9f6ec" stroke="#2f8a46" stroke-width="1.6"/>
+<text x="600.0" y="341" text-anchor="middle" font-size="13" font-weight="600" fill="#2f8a46">mux B</text>
+<text x="600.0" y="363" text-anchor="middle" font-size="10" fill="#222">rs2 · imm · ir · 4</text>
+<rect x="410" y="400" width="250" height="120" rx="8" fill="#e9f6ec" stroke="#2f8a46" stroke-width="1.6"/>
+<text x="535.0" y="421" text-anchor="middle" font-size="15" font-weight="600" fill="#2f8a46">ALU (shared)</text>
+<text x="535.0" y="445" text-anchor="middle" font-size="12" fill="#222">add/sub · logic · compare</text>
+<text x="535.0" y="461" text-anchor="middle" font-size="12" fill="#222">addresses · branches · PC + 4</text>
+<text x="535.0" y="477" text-anchor="middle" font-size="12" fill="#222">iterative shifter (8 or 1 bit/cycle)</text>
+<text x="535.0" y="493" text-anchor="middle" font-size="12" fill="#222">sub-word load alignment · AMO ops</text>
+<rect x="410" y="545" width="120" height="95" rx="8" fill="#e9f6ec" stroke="#2f8a46" stroke-width="1.6"/>
+<text x="470.0" y="566" text-anchor="middle" font-size="14" font-weight="600" fill="#2f8a46">MUL</text>
+<text x="470.0" y="589" text-anchor="middle" font-size="11" fill="#222">33 × 33</text>
+<text x="470.0" y="604" text-anchor="middle" font-size="11" fill="#222">DSP48</text>
+<text x="470.0" y="619" text-anchor="middle" font-size="11" fill="#222">4 cycles</text>
+<rect x="540" y="545" width="120" height="95" rx="8" fill="#e9f6ec" stroke="#2f8a46" stroke-width="1.6"/>
+<text x="600.0" y="566" text-anchor="middle" font-size="14" font-weight="600" fill="#2f8a46">DIV</text>
+<text x="600.0" y="589" text-anchor="middle" font-size="11" fill="#222">iterative</text>
+<text x="600.0" y="604" text-anchor="middle" font-size="11" fill="#222">unsigned</text>
+<text x="600.0" y="619" text-anchor="middle" font-size="11" fill="#222">(HW_DIV)</text>
+<rect x="690" y="100" width="200" height="150" rx="8" fill="#fdf1e3" stroke="#c46f12" stroke-width="1.6"/>
+<text x="790.0" y="121" text-anchor="middle" font-size="15" font-weight="600" fill="#c46f12">TLB</text>
+<text x="790.0" y="145" text-anchor="middle" font-size="12" fill="#222">fully associative</text>
+<text x="790.0" y="161" text-anchor="middle" font-size="12" fill="#222">TLB_ENTRIES (default 4)</text>
+<text x="790.0" y="177" text-anchor="middle" font-size="12" fill="#222">4 KB / 4 MB pages</text>
+<text x="790.0" y="193" text-anchor="middle" font-size="12" fill="#222">R W X U, SUM/MXR check</text>
+<text x="790.0" y="209" text-anchor="middle" font-size="12" fill="#222">no walker: miss → F</text>
+<rect x="690" y="275" width="200" height="70" rx="8" fill="#fdf1e3" stroke="#c46f12" stroke-width="1.6"/>
+<text x="790.0" y="296" text-anchor="middle" font-size="13" font-weight="600" fill="#c46f12">Physical address decode</text>
+<text x="790.0" y="320" text-anchor="middle" font-size="12" fill="#222">F mode &amp;&amp; pa &lt; 0x2000 ?</text>
+<rect x="690" y="370" width="160" height="110" rx="8" fill="#f2ebfa" stroke="#7a4bb3" stroke-width="1.6"/>
+<text x="770.0" y="391" text-anchor="middle" font-size="15" font-weight="600" fill="#7a4bb3">F-RAM access</text>
+<text x="770.0" y="415" text-anchor="middle" font-size="12" fill="#222">8 KB, F mode only</text>
+<text x="770.0" y="431" text-anchor="middle" font-size="12" fill="#222">shared register file BRAM</text>
+<text x="770.0" y="447" text-anchor="middle" font-size="12" fill="#222">invisible to M/S/U</text>
+<rect x="690" y="505" width="200" height="135" rx="8" fill="#f1f1f1" stroke="#666666" stroke-width="1.6"/>
+<text x="790.0" y="526" text-anchor="middle" font-size="15" font-weight="600" fill="#666666">AXI4 manager</text>
+<text x="790.0" y="550" text-anchor="middle" font-size="12" fill="#222">single 32-bit beats</text>
+<text x="790.0" y="566" text-anchor="middle" font-size="12" fill="#222">one transaction in flight</text>
+<text x="790.0" y="582" text-anchor="middle" font-size="12" fill="#222">instructions and data</text>
+<text x="790.0" y="598" text-anchor="middle" font-size="12" fill="#222">AxPROT: privilege, insn</text>
+<path d="M470,290 L470,320" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M600,290 L600,320" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M470,378 L470,400" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M600,378 L600,400" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M660,460 L675,460 L675,85 L535,85 L535,100" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="605" y="80" text-anchor="middle" font-size="11" fill="#444">result</text>
+<path d="M410,470 L395,470 L395,550 L380,550" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M380,175 L410,175" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M380,355 L410,355" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M675,175 L690,175" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M790,250 L790,275" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M760,345 L760,370" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="752" y="362" text-anchor="end" font-size="11" fill="#444">yes</text>
+<path d="M870,345 L870,505" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="876" y="430" text-anchor="start" font-size="11" fill="#444">no</text>
+<path d="M470,545 L470,520" fill="none" stroke="#333" stroke-width="1.6" marker-start="url(#ahs)"/>
+<path d="M600,545 L600,520" fill="none" stroke="#333" stroke-width="1.6" marker-start="url(#ahs)"/>
+<path d="M40,300 L150,300" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="60" y="295" text-anchor="start" font-size="11" fill="#444">meip</text>
+<path d="M40,330 L150,330" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="60" y="325" text-anchor="start" font-size="11" fill="#444">seip</text>
+<path d="M40,360 L150,360" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="60" y="355" text-anchor="start" font-size="11" fill="#444">mtip</text>
+<path d="M40,390 L150,390" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="60" y="385" text-anchor="start" font-size="11" fill="#444">msip</text>
+<text x="40" y="272" text-anchor="start" font-size="12" font-weight="600" fill="#444">interrupts</text>
+<path d="M890,572 L1100,572" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="995" y="563" text-anchor="middle" font-size="11" fill="#444">AXI4 to the system</text>
+<path d="M40,130 L150,130" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="45" y="125" text-anchor="start" font-size="11" fill="#444">reset_vector</text>
+<rect x="150" y="682" width="16" height="12" rx="3" fill="#e8f0fb" stroke="#3b6fb6"/>
+<text x="172" y="693" text-anchor="start" font-size="12" font-weight="normal" fill="#444">control</text>
+<rect x="300" y="682" width="16" height="12" rx="3" fill="#e9f6ec" stroke="#2f8a46"/>
+<text x="322" y="693" text-anchor="start" font-size="12" font-weight="normal" fill="#444">datapath</text>
+<rect x="450" y="682" width="16" height="12" rx="3" fill="#fdf1e3" stroke="#c46f12"/>
+<text x="472" y="693" text-anchor="start" font-size="12" font-weight="normal" fill="#444">memory</text>
+<rect x="600" y="682" width="16" height="12" rx="3" fill="#f2ebfa" stroke="#7a4bb3"/>
+<text x="622" y="693" text-anchor="start" font-size="12" font-weight="normal" fill="#444">F mode / millicode</text>
+<rect x="750" y="682" width="16" height="12" rx="3" fill="#f1f1f1" stroke="#666666"/>
+<text x="772" y="693" text-anchor="start" font-size="12" font-weight="normal" fill="#444">bus</text>
+</svg>
