@@ -6,6 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install --no-install-recommends -y \
     bc \
     bison \
+    libboost-iostreams-dev \
     build-essential \
     ca-certificates \
     ccache \
@@ -23,4 +24,5 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     rsync \
     verilator \
     yosys \
+    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
