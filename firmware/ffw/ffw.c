@@ -3,7 +3,7 @@
 //
 // F mode firmware: Sv32 page table walks for TLB misses, the upper halves of
 // mcycle/minstret, emulation of CSRs that aren't implemented in hardware and
-// optionally AMOs and division.  See docs/merv-arch.md.
+// optionally AMOs, multiplication and division.  See docs/merv-arch.md.
 
 #include <stdint.h>
 
@@ -416,9 +416,6 @@ static int emulate_div(uint32_t insn)
     uint32_t b = xreg_read((insn >> 20) & 31);
     uint32_t q, r, v;
 
-    if (f3 < 4)
-        return 0;
-
     if (b == 0) {
         q = ~0u;
         r = a;
@@ -442,6 +439,56 @@ static int emulate_div(uint32_t insn)
     return 1;
 }
 
+// The firmware is built without the M extension: shift and add, iterating
+// over the smaller operand.  Single bit shifts and compares avoid the
+// iterative shifter.
+static uint32_t umul(uint32_t a, uint32_t b, uint32_t *hi)
+{
+    uint32_t lo = 0, h = 0, ml, mh = 0;
+
+    if (a < b) {
+        ml = b;
+        b = a;
+    } else {
+        ml = a;
+    }
+    while (b) {
+        if (b & 1) {
+            uint32_t t = lo + ml;
+            h += mh + (t < lo);
+            lo = t;
+        }
+        mh = mh + mh + ((int32_t)ml < 0);
+        ml += ml;
+        b >>= 1;
+    }
+    *hi = h;
+    return lo;
+}
+
+static int emulate_mul(uint32_t insn)
+{
+    uint32_t f3 = (insn >> 12) & 7;
+    uint32_t rd = (insn >> 7) & 31;
+    uint32_t a = xreg_read((insn >> 15) & 31);
+    uint32_t b = xreg_read((insn >> 20) & 31);
+    uint32_t lo, hi;
+
+    lo = umul(a, b, &hi);
+    // The signed high words from the unsigned product: subtract b << 32 for
+    // a negative signed a and a << 32 for a negative signed b.
+    if (f3 == 1 || f3 == 2) {
+        if ((int32_t)a < 0)
+            hi -= b;
+        if (f3 == 1 && (int32_t)b < 0)
+            hi -= a;
+    }
+
+    if (rd)
+        xreg_write(rd, f3 ? hi : lo);
+    return 1;
+}
+
 static void emulate(uint32_t insn)
 {
     int ok = 0;
@@ -451,7 +498,7 @@ static void emulate(uint32_t insn)
     case 0x2f: ok = emulate_amo(insn); break;
     case 0x33:
         if ((insn >> 25) == 1)
-            ok = emulate_div(insn);
+            ok = (insn & 0x4000) ? emulate_div(insn) : emulate_mul(insn);
         break;
     default: break;
     }

@@ -21,9 +21,10 @@ level above M mode that is invisible to it:
 - **CSR emulation**: only the frequently used CSRs are implemented in
   hardware, everything else (`misa`, the ID registers, PMP, HPM counters,
   `time`, `*envcfg`, triggers...) is emulated.
-- **Optional AMO and division emulation** (`NATIVE_AMO=0`, `HW_DIV=0`) and
-  signed division with negative operands is always emulated.  An optional
-  single cycle barrel shifter (`BARREL_SHIFT=1`) replaces the iterative one.
+- **Optional AMO, multiplication and division emulation** (`NATIVE_AMO=0`,
+  `HW_MUL=0`, `HW_DIV=0`) and signed division with negative operands is
+  always emulated.  An optional single cycle barrel shifter
+  (`BARREL_SHIFT=1`) replaces the iterative one.
 
 The F mode firmware lives in a private 8KB RAM, has its own GPR bank and its
 CSRs are inaccessible to M mode.  The GPRs are mapped into the top of the

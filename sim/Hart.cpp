@@ -698,9 +698,10 @@ bool Hart::exec_muldiv(uint32_t insn)
     auto b = rs(rs2_of(insn));
 
     // The hardware divider is unsigned only: signed division with a negative
-    // operand is emulated by F mode, as is all division without HW_DIV.
+    // operand is emulated by F mode, as is all division without HW_DIV and
+    // all multiplication without HW_MUL.
     bool negative = !(f3 & 1) && ((a | b) & 0x80000000u);
-    if (f3 >= 4 && (!cfg.hw_div || negative)) {
+    if (f3 >= 4 ? !cfg.hw_div || negative : !cfg.hw_mul) {
         enter_f(fevent::emulate, pc, insn);
         return false;
     }
@@ -1006,7 +1007,7 @@ uint32_t Hart::csr_read(uint16_t addr)
     case csr::fconfig:
         return cfg.tlb_entries | (cfg.native_amo ? 1u << 8 : 0) |
                (cfg.hw_div ? 1u << 9 : 0) | (cfg.barrel_shift ? 1u << 10 : 0) |
-               (cfg.hart_id << 24);
+               (cfg.hw_mul ? 1u << 11 : 0) | (cfg.hart_id << 24);
     default: return 0;
     }
 }

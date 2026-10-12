@@ -9,6 +9,7 @@ struct Config {
     unsigned tlb_entries = 4;
     bool native_amo = true;
     bool hw_div = true;
+    bool hw_mul = true;
     // Only changes the timing of the RTL (and fconfig).
     bool barrel_shift = false;
     uint32_t reset_vector = 0x40000000;

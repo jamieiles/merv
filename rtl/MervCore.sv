@@ -19,6 +19,7 @@ module MervCore #(
     parameter int TLB_ENTRIES = 4,
     parameter int NATIVE_AMO  = 1,
     parameter int HW_DIV      = 1,
+    parameter int HW_MUL      = 1,
     // Shift in a single cycle rather than by 8 or 1 bits per cycle.
     parameter int BARREL_SHIFT = 0,
     // Read by the firmware from fconfig to emulate mhartid.
@@ -480,15 +481,25 @@ module MervCore #(
     logic        mul_done, div_done;
     logic [31:0] mul_result, div_result;
 
-    MervMul mul (
-        .clk   (clk),
-        .start (st[S_EXEC] && d_mul),
-        .funct (funct3[1:0]),
-        .a     (rf_a_data),
-        .b     (rf_b_data),
-        .result(mul_result),
-        .done  (mul_done)
-    );
+    // Without HW_MUL all multiplication is emulated in F mode.
+    wire mul_emulate = HW_MUL == 0;
+
+    generate
+        if (HW_MUL != 0) begin : gen_mul
+            MervMul mul (
+                .clk   (clk),
+                .start (st[S_EXEC] && d_mul),
+                .funct (funct3[1:0]),
+                .a     (rf_a_data),
+                .b     (rf_b_data),
+                .result(mul_result),
+                .done  (mul_done)
+            );
+        end else begin : gen_no_mul
+            assign mul_result = 32'b0;
+            assign mul_done   = 1'b0;
+        end
+    endgenerate
 
     // Signed division with a negative operand is emulated in F mode, the
     // hardware divider is unsigned only.
@@ -758,7 +769,8 @@ module MervCore #(
                 C_FINJECT:    c_ff_rdata <= {finj_valid, 26'b0, finj_cause};
                 C_FTLBIDX:    c_ff_rdata <= {28'b0, ftlbidx};
                 C_FBOOTVEC:   c_ff_rdata <= reset_vector;
-                C_FCONFIG:    c_ff_rdata <= {8'(HART_ID), 13'b0, BARREL_SHIFT != 0, HW_DIV != 0,
+                C_FCONFIG:    c_ff_rdata <= {8'(HART_ID), 12'b0, HW_MUL != 0,
+                                             BARREL_SHIFT != 0, HW_DIV != 0,
                                              NATIVE_AMO != 0, 8'(TLB_ENTRIES)};
                 default:      c_ff_rdata <= 32'b0;
             endcase
@@ -1190,7 +1202,7 @@ module MervCore #(
                     raise_trap  = 1'b1;
                     raise_cause = e_cause;
                     raise_tval  = e_tval;
-                end else if (e_div && div_emulate) begin
+                end else if ((e_div && div_emulate) || (e_mul && mul_emulate)) begin
                     raise_fev    = 1'b1;
                     raise_fcause = `FEV_EMULATE;
                     raise_tval   = TV_IR;
@@ -1198,7 +1210,7 @@ module MervCore #(
                 nst[S_XRET1]  = e_xret;
                 nst[S_FRET1]  = e_fret;
                 nst[S_CSR1]   = e_csr;
-                nst[S_MUL]    = e_mul;
+                nst[S_MUL]    = e_mul && !mul_emulate;
                 nst[S_DIV]    = e_div && !div_emulate;
                 nst[S_SHIFT]  = e_shift;
                 nst[S_BRANCH] = e_branch;

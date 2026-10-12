@@ -20,6 +20,7 @@ This document is the contract between the instruction set simulator
 | `TLB_ENTRIES`  | 4            | Number of fully associative unified TLB entries (2-16)          |
 | `NATIVE_AMO`   | 1            | AMOs in hardware, else emulated by F mode with LR/SC            |
 | `HW_DIV`       | 1            | Unsigned DIV/DIVU/REM/REMU in hardware, else emulated by F mode |
+| `HW_MUL`       | 1            | MUL/MULH/MULHSU/MULHU in hardware, else emulated by F mode      |
 | `BARREL_SHIFT` | 0            | Single cycle shifter, else 8 or 1 bits per cycle                |
 | `RESET_VECTOR` | `0x40000000` | M mode entry point after the F mode firmware has initialized    |
 | `HART_ID`      | 0            | Hart ID (0-255) in `fconfig`, emulated `mhartid`                |
@@ -82,7 +83,8 @@ Instruction emulation (cause 6) is raised for:
   after the address has been checked for alignment, translated and the store
   permissions checked, `fpaddr` holds the physical address,
 - DIV/DIVU/REM/REMU when `HW_DIV = 0`, and DIV/REM with a negative operand
-  when `HW_DIV = 1` (the hardware divider is unsigned only).
+  when `HW_DIV = 1` (the hardware divider is unsigned only),
+- MUL/MULH/MULHSU/MULHU when `HW_MUL = 0`.
 
 The firmware completes the instruction, writes the destination register through
 the F-RAM register window, increments `minstret` and returns to `fepc + 4`, or
@@ -166,7 +168,7 @@ and `0x7c7` are unallocated and behave like any other unimplemented CSR.
 | `0x7c9` | `ftlbhi`   | W      | [31:12] VPN, [1] SUPER, [0] V                                        |
 | `0x7ca` | `ftlblo`   | W      | [31:12] PPN, [3] U, [2] X, [1] W, [0] R; writing commits the entry   |
 | `0x7cb` | `fbootvec` | RO     | `RESET_VECTOR`                                                       |
-| `0x7cc` | `fconfig`  | RO     | [7:0] `TLB_ENTRIES`, [8] `NATIVE_AMO`, [9] `HW_DIV`, [10] `BARREL_SHIFT`, [31:24] `HART_ID` |
+| `0x7cc` | `fconfig`  | RO     | [7:0] `TLB_ENTRIES`, [8] `NATIVE_AMO`, [9] `HW_DIV`, [10] `BARREL_SHIFT`, [11] `HW_MUL`, [31:24] `HART_ID` |
 
 `fstatus`:
 
@@ -393,7 +395,8 @@ everything else behind a jump at `0x00000000`:
   level TLB.  Anything else falls back to the C walker which repeats the walk
   and injects the fault,
 - the remaining events are handled in C: counter wraps, CSR emulation, AMO
-  emulation (LR/SC loop on `fpaddr`) and division.
+  emulation (LR/SC loop on `fpaddr`), multiplication (shift and add) and
+  division.
 
 Shifts are iterative in the core (8 or 1 bits per cycle) so the fast path
 masks with constants held in `s3`-`s5`, `s7` and `s8` instead.  `s6`, `s10`

@@ -19,6 +19,7 @@
 #include "VMervCoreExcl.h"
 #include "VMervCoreNoDiv.h"
 #include "VMervCoreNoDivBarrel.h"
+#include "VMervCoreNoMulDiv.h"
 #include "VMervCoreSmall.h"
 #endif
 
@@ -316,8 +317,15 @@ int run_rtl(const Options &opts, const RiscVELF *elf,
             soc, c.reset_vector, opts.axi_latency, opts.dram_latency,
             opts.dram_cache_sets, opts.dram_cache_ways, opts.amo_retry);
     };
-    bool deflt = c.tlb_entries == 4 && c.native_amo;
-    if (c.axi_exclusive) {
+    bool deflt = c.tlb_entries == 4 && c.native_amo && c.hw_mul;
+    if (!c.hw_mul) {
+        if (c.tlb_entries != 4 || !c.native_amo || c.hw_div ||
+            c.barrel_shift || c.axi_exclusive)
+            throw std::runtime_error("RTL model with --hw-mul 0: "
+                                     "--tlb-entries 4 --native-amo 1 "
+                                     "--hw-div 0 --barrel-shift 0");
+        make.operator()<VMervCoreNoMulDiv>();
+    } else if (c.axi_exclusive) {
         if (!deflt || !c.hw_div || !c.barrel_shift)
             throw std::runtime_error("RTL model with --axi-exclusive 1: "
                                      "--tlb-entries 4 --native-amo 1 "
@@ -337,8 +345,8 @@ int run_rtl(const Options &opts, const RiscVELF *elf,
     else
         throw std::runtime_error(
             "RTL models: --tlb-entries 4 --native-amo 1 with any --hw-div and "
-            "--barrel-shift, or --tlb-entries 2 --native-amo 0 --hw-div 0 "
-            "--barrel-shift 0");
+            "--barrel-shift, --hw-div 0 --hw-mul 0, or --tlb-entries 2 "
+            "--native-amo 0 --hw-div 0 --barrel-shift 0");
     if (!opts.waves_path.empty())
         core->open_waves(opts.waves_path);
 
@@ -393,6 +401,8 @@ int main(int argc, char **argv)
         args.num("tlb-entries", opts.core.tlb_entries, "TLB entries");
         args.flag01("native-amo", opts.core.native_amo, "AMOs in hardware (0/1)");
         args.flag01("hw-div", opts.core.hw_div, "division in hardware (0/1)");
+        args.flag01("hw-mul", opts.core.hw_mul,
+                    "multiplication in hardware (0/1)");
         args.flag01("barrel-shift", opts.core.barrel_shift,
                     "single cycle shifter in the RTL (0/1)");
         size_t dram_mb = opts.soc.dram_size >> 20;

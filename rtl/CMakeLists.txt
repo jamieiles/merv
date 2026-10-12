@@ -17,14 +17,15 @@ if(verilator_FOUND)
 
     add_library(merv-rtl STATIC)
     # The default configuration, the smallest one (emulated AMOs and
-    # division, two TLB entries) and the default with each combination of
-    # the divider and the barrel shifter.
+    # division, two TLB entries), the default with each combination of the
+    # divider and the barrel shifter, and without the multiplier or divider.
     foreach(model
             "MervCore|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=1 -GBARREL_SHIFT=0"
             "MervCoreSmall|-GTLB_ENTRIES=2 -GNATIVE_AMO=0 -GHW_DIV=0 -GBARREL_SHIFT=0"
             "MervCoreBarrel|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=1 -GBARREL_SHIFT=1"
             "MervCoreNoDiv|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=0 -GBARREL_SHIFT=0"
             "MervCoreNoDivBarrel|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=0 -GBARREL_SHIFT=1"
+            "MervCoreNoMulDiv|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=0 -GHW_MUL=0 -GBARREL_SHIFT=0"
             "MervCoreExcl|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=1 -GBARREL_SHIFT=1 -GAXI_EXCLUSIVE=1")
         string(REPLACE "|" ";" parts "${model}")
         list(GET parts 0 prefix)

@@ -20,7 +20,7 @@ add_subdirectory(sim)
 # Core configurations exercised by the test suites: name|simulator arguments.
 set(MERV_TEST_CONFIGS
     "default|"
-    "emulated|--native-amo 0 --hw-div 0"
+    "emulated|--native-amo 0 --hw-div 0 --hw-mul 0"
     "tlb2|--tlb-entries 2 --native-amo 1 --hw-div 0"
     "tlb16|--tlb-entries 16 --native-amo 0 --hw-div 1")
 
@@ -30,6 +30,7 @@ set(MERV_RTL_TEST_CONFIGS
     "rtl-small|--cosim --tlb-entries 2 --native-amo 0 --hw-div 0"
     "rtl-barrel|--cosim --barrel-shift 1"
     "rtl-nodiv-barrel|--cosim --hw-div 0 --barrel-shift 1"
+    "rtl-nomuldiv|--cosim --hw-div 0 --hw-mul 0"
     "rtl-excl|--cosim --barrel-shift 1 --axi-exclusive 1 --amo-retry")
 
 add_subdirectory(tests)

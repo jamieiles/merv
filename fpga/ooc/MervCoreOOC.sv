@@ -8,6 +8,7 @@ module MervCoreOOC #(
     parameter int TLB_ENTRIES = 4,
     parameter int NATIVE_AMO  = 1,
     parameter int HW_DIV      = 1,
+    parameter int HW_MUL      = 1,
     parameter int BARREL_SHIFT = 0,
     parameter int AXI_EXCLUSIVE = 0
 ) (
@@ -46,6 +47,7 @@ module MervCoreOOC #(
         .TLB_ENTRIES(TLB_ENTRIES),
         .NATIVE_AMO (NATIVE_AMO),
         .HW_DIV     (HW_DIV),
+        .HW_MUL     (HW_MUL),
         .BARREL_SHIFT(BARREL_SHIFT),
         .AXI_EXCLUSIVE(AXI_EXCLUSIVE)
     ) core (

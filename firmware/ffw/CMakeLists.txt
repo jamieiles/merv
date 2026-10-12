@@ -1,5 +1,5 @@
 # The F mode firmware must not use the M extension so that it works with
-# HW_DIV=0, and must not use AMOs so that it works with NATIVE_AMO=0.
+# HW_MUL=0 and HW_DIV=0, and must not use AMOs so that it works with NATIVE_AMO=0.
 add_riscv_elf(ffw
     LINKER_SCRIPT ffw.ld
     MARCH rv32ia_zicsr
