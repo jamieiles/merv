@@ -12,6 +12,10 @@ struct Config {
     // Only changes the timing of the RTL (and fconfig).
     bool barrel_shift = false;
     uint32_t reset_vector = 0x40000000;
+    // fconfig[31:24], emulated mhartid.
+    unsigned hart_id = 0;
+    // LR/SC and AMOs use AXI exclusive accesses (RTL only).
+    bool axi_exclusive = false;
 };
 
 namespace merv

@@ -21,6 +21,11 @@ module MervCore #(
     parameter int HW_DIV      = 1,
     // Shift in a single cycle rather than by 8 or 1 bits per cycle.
     parameter int BARREL_SHIFT = 0,
+    // Read by the firmware from fconfig to emulate mhartid.
+    parameter int HART_ID     = 0,
+    // LR/SC and AMOs use AXI exclusive accesses, for atomicity between
+    // harts.  Otherwise they are only atomic with a single manager.
+    parameter int AXI_EXCLUSIVE = 0,
     parameter     FFW_INIT    = ""
 ) (
     input  logic        clk,
@@ -28,10 +33,14 @@ module MervCore #(
     // M mode entry point after F mode firmware initialization, normally tied
     // to a constant.
     input  logic [31:0] reset_vector,
-    // AXI4 manager, single beat transactions, no IDs.
+    // AXI4 manager, single beat transactions, no IDs.  With AXI_EXCLUSIVE
+    // LR and the read of an AMO are exclusive reads, SC and the write of an
+    // AMO exclusive writes: a write that doesn't get EXOKAY wasn't
+    // performed, failing the SC or retrying the AMO from the read.
     output logic [31:0] axi_awaddr,
     output logic [ 2:0] axi_awsize,
     output logic [ 2:0] axi_awprot,
+    output logic        axi_awlock,
     output logic        axi_awvalid,
     input  logic        axi_awready,
     output logic [31:0] axi_wdata,
@@ -46,6 +55,7 @@ module MervCore #(
     output logic [31:0] axi_araddr,
     output logic [ 2:0] axi_arsize,
     output logic [ 2:0] axi_arprot,
+    output logic        axi_arlock,
     output logic        axi_arvalid,
     input  logic        axi_arready,
     input  logic [31:0] axi_rdata,
@@ -748,7 +758,7 @@ module MervCore #(
                 C_FINJECT:    c_ff_rdata <= {finj_valid, 26'b0, finj_cause};
                 C_FTLBIDX:    c_ff_rdata <= {28'b0, ftlbidx};
                 C_FBOOTVEC:   c_ff_rdata <= reset_vector;
-                C_FCONFIG:    c_ff_rdata <= {21'b0, BARREL_SHIFT != 0, HW_DIV != 0,
+                C_FCONFIG:    c_ff_rdata <= {8'(HART_ID), 13'b0, BARREL_SHIFT != 0, HW_DIV != 0,
                                              NATIVE_AMO != 0, 8'(TLB_ENTRIES)};
                 default:      c_ff_rdata <= 32'b0;
             endcase
@@ -1164,6 +1174,10 @@ module MervCore #(
                     if (axi_bresp[1] && !is_f) begin
                         raise_trap  = 1'b1;
                         raise_cause = `EXC_STORE_ACCESS;
+                    end else if (AXI_EXCLUSIVE != 0 && acc == `ACC_AMO &&
+                                 axi_bresp == 2'b00) begin
+                        // Lost the exclusive, redo the read.
+                        nst[S_AR] = 1'b1;
                     end else begin
                         nst[S_WB] = 1'b1;
                     end
@@ -1347,6 +1361,12 @@ module MervCore #(
             end
             default: ;
         endcase
+
+        // An SC that went to the bus fails without EXOKAY.
+        if (AXI_EXCLUSIVE != 0 && st[S_B]) begin
+            res_other_en = axi_bvalid && acc == `ACC_SC;
+            res_other    = {31'b0, ~axi_bresp[0]};
+        end
     end
 
     always_ff @(posedge clk) begin
@@ -1722,11 +1742,13 @@ module MervCore #(
     assign axi_araddr  = pa;
     assign axi_arsize  = {1'b0, size};
     assign axi_arprot  = axprot;
+    assign axi_arlock  = AXI_EXCLUSIVE != 0 && (acc == `ACC_LR || acc == `ACC_AMO);
     assign axi_arvalid = st[S_AR];
     assign axi_rready  = st[S_R];
     assign axi_awaddr  = pa;
     assign axi_awsize  = {1'b0, size};
     assign axi_awprot  = axprot;
+    assign axi_awlock  = AXI_EXCLUSIVE != 0 && (acc == `ACC_SC || acc == `ACC_AMO);
     assign axi_awvalid = st[S_AW] && !aw_done;
     assign axi_wdata   = wdata;
     assign axi_wstrb   = wstrb;

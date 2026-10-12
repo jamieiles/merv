@@ -4,9 +4,18 @@
 // AXI4 subordinate to Xilinx 7-series MIG native (app_*) interface bridge
 // for the merv platform, where there are no caches in the core and every
 // access is a single 32-bit (or narrower) beat, apart from DMA which may use
-// INCR bursts.  There are two subordinate ports, port 0 for the CPU (DRAM
-// accesses come straight from the core, bypassing the interconnect) and
-// port 1 for DMA, arbitrated a transaction at a time.
+// INCR bursts.  There are NPORTS subordinate ports, one per hart (DRAM
+// accesses come straight from the cores, bypassing the interconnect) and the
+// last for DMA, arbitrated round robin a transaction at a time.
+//
+// With EXCLUSIVE, exclusive accesses (AxLOCK) implement LR/SC and AMOs across
+// harts.  Each port has a monitor of one 32-bit word: an exclusive read sets
+// it and returns EXOKAY.  An exclusive write to the monitored word is
+// performed, returns EXOKAY and clears the port's monitor, otherwise it is
+// dropped and returns OKAY.  Any write by another port to the monitored word
+// clears the monitor, a port's own non-exclusive writes don't.  Exclusive
+// accesses must be single beat.  Without EXCLUSIVE (a single hart) AxLOCK is
+// ignored and every access is a normal one.
 //
 // With CACHE_SETS > 0 there is a CACHE_WAYS set associative write-back cache
 // of 16 byte lines (one MIG command) in front of the DRAM.  Both ports go
@@ -34,6 +43,8 @@
 // write.
 module AXIMIGBridge #(
     parameter int APP_ADDR_WIDTH = 28,
+    parameter int NPORTS         = 2,
+    parameter bit EXCLUSIVE      = 1,
     parameter int CACHE_SETS     = 2048,
     parameter int CACHE_WAYS     = 4
 ) (
@@ -41,26 +52,28 @@ module AXIMIGBridge #(
     input  logic                      reset,
     // AXI4 subordinates, 32-bit data, no IDs.  Bursts are INCR of 32-bit
     // beats, size and burst type are not checked.
-    input  logic [   1:0][31:0] s_axi_awaddr,
-    input  logic [   1:0][ 7:0] s_axi_awlen,
-    input  logic [   1:0]       s_axi_awvalid,
-    output logic [   1:0]       s_axi_awready,
-    input  logic [   1:0][31:0] s_axi_wdata,
-    input  logic [   1:0][ 3:0] s_axi_wstrb,
-    input  logic [   1:0]       s_axi_wvalid,
-    output logic [   1:0]       s_axi_wready,
-    output logic [   1:0][ 1:0] s_axi_bresp,
-    output logic [   1:0]       s_axi_bvalid,
-    input  logic [   1:0]       s_axi_bready,
-    input  logic [   1:0][31:0] s_axi_araddr,
-    input  logic [   1:0][ 7:0] s_axi_arlen,
-    input  logic [   1:0]       s_axi_arvalid,
-    output logic [   1:0]       s_axi_arready,
-    output logic [   1:0][31:0] s_axi_rdata,
-    output logic [   1:0][ 1:0] s_axi_rresp,
-    output logic [   1:0]       s_axi_rlast,
-    output logic [   1:0]       s_axi_rvalid,
-    input  logic [   1:0]       s_axi_rready,
+    input  logic [NPORTS-1:0][31:0] s_axi_awaddr,
+    input  logic [NPORTS-1:0][ 7:0] s_axi_awlen,
+    input  logic [NPORTS-1:0]       s_axi_awlock,
+    input  logic [NPORTS-1:0]       s_axi_awvalid,
+    output logic [NPORTS-1:0]       s_axi_awready,
+    input  logic [NPORTS-1:0][31:0] s_axi_wdata,
+    input  logic [NPORTS-1:0][ 3:0] s_axi_wstrb,
+    input  logic [NPORTS-1:0]       s_axi_wvalid,
+    output logic [NPORTS-1:0]       s_axi_wready,
+    output logic [NPORTS-1:0][ 1:0] s_axi_bresp,
+    output logic [NPORTS-1:0]       s_axi_bvalid,
+    input  logic [NPORTS-1:0]       s_axi_bready,
+    input  logic [NPORTS-1:0][31:0] s_axi_araddr,
+    input  logic [NPORTS-1:0][ 7:0] s_axi_arlen,
+    input  logic [NPORTS-1:0]       s_axi_arlock,
+    input  logic [NPORTS-1:0]       s_axi_arvalid,
+    output logic [NPORTS-1:0]       s_axi_arready,
+    output logic [NPORTS-1:0][31:0] s_axi_rdata,
+    output logic [NPORTS-1:0][ 1:0] s_axi_rresp,
+    output logic [NPORTS-1:0]       s_axi_rlast,
+    output logic [NPORTS-1:0]       s_axi_rvalid,
+    input  logic [NPORTS-1:0]       s_axi_rready,
     // MIG native interface.
     input  logic                      init_calib_complete,
     output logic [APP_ADDR_WIDTH-1:0] app_addr,
@@ -100,6 +113,11 @@ module AXIMIGBridge #(
     localparam int IDX_BITS  = HAS_CACHE ? $clog2(CACHE_SETS) : 1;
     localparam int WAY_BITS  = WAYS > 1 ? $clog2(WAYS) : 1;
     localparam int TAG_BITS  = APP_ADDR_WIDTH - 4 - IDX_BITS;
+    // Request channels: 2p is port p's AR, 2p + 1 its AW.
+    localparam int NCHAN     = 2 * NPORTS;
+    localparam int PORT_BITS = NPORTS > 1 ? $clog2(NPORTS) : 1;
+    localparam int CHAN_BITS = PORT_BITS + 1;
+    localparam int MON_BITS  = APP_ADDR_WIDTH - 2;
     // Tag entries are {dirty, valid, tag}.
     localparam int VALID     = TAG_BITS;
     localparam int DIRTY     = TAG_BITS + 1;
@@ -114,10 +132,15 @@ module AXIMIGBridge #(
     logic [7:0]  beats_left;
     logic [31:0] data;
     logic [3:0]  strb;
-    logic        port;       // the port of the transaction in progress
-    logic        b_pend;     // a posted write response for b_port
-    logic        b_port;
-    logic [1:0]  last_grant; // round robin priority
+    logic [PORT_BITS-1:0] port;       // the port of the transaction in progress
+    logic                 excl;       // and whether it is exclusive
+    logic                 b_pend;     // a posted write response for b_port
+    logic [PORT_BITS-1:0] b_port;
+    logic                 b_exokay;
+    logic [CHAN_BITS-1:0] last_grant; // round robin priority
+    // Exclusive monitors, a word address per port.
+    logic [NPORTS-1:0]    mon_valid;
+    logic [MON_BITS-1:0]  mon_addr[NPORTS];
 
     // Cache arrays, single ported with a one cycle read latency.  The
     // outputs hold their value while the index is unchanged and the arrays
@@ -224,40 +247,55 @@ module AXIMIGBridge #(
     assign app_wdf_wren = state == WR_WDF || state == WB_WDF;
     assign app_wdf_end  = app_wdf_wren;
 
-    // Round robin arbitration of the four request channels (AR and AW of
-    // each port), granted only when idle.
-    logic [3:0] req, grant;
-    logic [1:0] grant_idx;
-
-    assign req = {s_axi_awvalid[1], s_axi_arvalid[1], s_axi_awvalid[0],
-                  s_axi_arvalid[0]};
+    // Round robin arbitration of the request channels (AR and AW of each
+    // port), granted only when idle.
+    logic [NCHAN-1:0]     req, grant;
+    logic [CHAN_BITS-1:0] grant_idx;
+    logic                 granted;
 
     always_comb begin
-        grant     = 4'b0;
-        grant_idx = 2'd0;
-        for (int i = 4; i >= 1; --i) begin
-            logic [1:0] idx;
-            idx = last_grant + 2'(i);
+        for (int p = 0; p < NPORTS; ++p) begin
+            req[2*p]   = s_axi_arvalid[p];
+            req[2*p+1] = s_axi_awvalid[p];
+        end
+    end
+
+    always_comb begin
+        grant_idx = '0;
+        granted   = 1'b0;
+        for (int i = NCHAN; i >= 1; --i) begin
+            int idx;
+            idx = int'(last_grant) + i;
+            if (idx >= NCHAN) idx -= NCHAN;
             if (req[idx]) begin
-                grant     = 4'b0001 << idx;
-                grant_idx = idx;
+                grant_idx = CHAN_BITS'(idx);
+                granted   = 1'b1;
             end
         end
-        if (state != IDLE || b_pend || !init_calib_complete) grant = 4'b0;
+        if (state != IDLE || b_pend || !init_calib_complete) granted = 1'b0;
+        grant = NCHAN'(granted) << grant_idx;
     end
+
+    wire [PORT_BITS-1:0] grant_port = grant_idx[CHAN_BITS-1:1];
+    wire                 grant_wr   = grant_idx[0];
 
     // The arrays are never written while idle.
     // verilator lint_off UNUSEDSIGNAL
-    wire [31:0] req_addr = grant_idx[0] ? s_axi_awaddr[grant_idx[1]] :
-                                          s_axi_araddr[grant_idx[1]];
+    wire [31:0] req_addr = grant_wr ? s_axi_awaddr[grant_port] :
+                                      s_axi_araddr[grant_port];
     // verilator lint_on UNUSEDSIGNAL
     assign ram_index = state == IDLE ? req_addr[4+:IDX_BITS] : index;
 
-    assign s_axi_arready = {grant[2], grant[0]};
-    assign s_axi_awready = {grant[3], grant[1]};
-
     // The first write beat can be accepted along with the address.
-    wire [1:0] w_with_aw = {grant[3], grant[1]};
+    logic [NPORTS-1:0] w_with_aw;
+
+    always_comb begin
+        for (int p = 0; p < NPORTS; ++p) begin
+            s_axi_arready[p] = grant[2*p];
+            s_axi_awready[p] = grant[2*p+1];
+            w_with_aw[p]     = grant[2*p+1];
+        end
+    end
     // A read hit returns the data from the arrays in RD_CHECK, otherwise
     // from the data register in RD_RESP.
     wire        rd_hit   = HAS_CACHE && state == RD_CHECK && hit;
@@ -265,50 +303,85 @@ module AXIMIGBridge #(
     wire        rvalid   = state == RD_RESP || rd_hit;
 
     always_comb begin
-        for (int p = 0; p < 2; ++p) begin
-            s_axi_wready[p] = (state == WR_DATA && port == p[0]) || w_with_aw[p];
-            s_axi_rvalid[p] = rvalid && port == p[0];
+        for (int p = 0; p < NPORTS; ++p) begin
+            s_axi_wready[p] = (state == WR_DATA && port == PORT_BITS'(p)) || w_with_aw[p];
+            s_axi_rvalid[p] = rvalid && port == PORT_BITS'(p);
             s_axi_rdata[p]  = rd_hit ? hit_data : data;
-            s_axi_rresp[p]  = 2'b00;
+            s_axi_rresp[p]  = {1'b0, excl};
             s_axi_rlast[p]  = beats_left == 8'd0;
-            s_axi_bvalid[p] = b_pend && b_port == p[0];
-            s_axi_bresp[p]  = 2'b00;
+            s_axi_bvalid[p] = b_pend && b_port == PORT_BITS'(p);
+            s_axi_bresp[p]  = {1'b0, b_exokay};
         end
     end
 
+    // A write beat being accepted, from the address channel when idle,
+    // otherwise for the transaction in progress.
+    wire                 w_idle = state == IDLE && |w_with_aw;
+    wire                 w_beat = (w_idle && s_axi_wvalid[grant_port]) ||
+                                  (state == WR_DATA && s_axi_wvalid[port]);
+    wire [PORT_BITS-1:0] w_port = w_idle ? grant_port : port;
+    wire                 w_excl = EXCLUSIVE && (w_idle ? s_axi_awlock[grant_port] : excl);
+    // verilator lint_off UNUSEDSIGNAL
+    wire [31:0]          w_addr = w_idle ? s_axi_awaddr[grant_port] : addr;
+    // verilator lint_on UNUSEDSIGNAL
+    wire [MON_BITS-1:0]  w_word = w_addr[2+:MON_BITS];
+    // An exclusive write without the monitor is dropped.
+    wire                 w_drop = w_excl &&
+                                  !(mon_valid[w_port] && mon_addr[w_port] == w_word);
+
     // Accepting the last write beat posts the write response.
-    wire w_last = (state == IDLE && |w_with_aw &&
-                   s_axi_wvalid[grant_idx[1]] && s_axi_awlen[grant_idx[1]] == 8'd0) ||
+    wire w_last = (w_idle && s_axi_wvalid[grant_port] && s_axi_awlen[grant_port] == 8'd0) ||
                   (state == WR_DATA && s_axi_wvalid[port] && beats_left == 8'd0);
 
     always_ff @(posedge clk) begin
         if (w_last) begin
-            b_pend <= 1'b1;
-            b_port <= state == IDLE ? grant_idx[1] : port;
+            b_pend   <= 1'b1;
+            b_port   <= w_port;
+            b_exokay <= w_excl && !w_drop;
         end else if (b_pend && s_axi_bready[b_port]) begin
             b_pend <= 1'b0;
         end
         if (reset) b_pend <= 1'b0;
     end
 
+    // The bridge serializes the transactions so the monitors can be updated
+    // when a request is accepted: an exclusive read sets the port's monitor,
+    // a write clears the other ports' monitors of the same word and a
+    // successful exclusive write clears the port's own.
+    always_ff @(posedge clk) begin
+        if (EXCLUSIVE && granted && !grant_wr && s_axi_arlock[grant_port]) begin
+            mon_valid[grant_port] <= 1'b1;
+            mon_addr[grant_port]  <= s_axi_araddr[grant_port][2+:MON_BITS];
+        end
+        if (w_beat && !w_drop) begin
+            for (int p = 0; p < NPORTS; ++p)
+                if (mon_addr[p] == w_word &&
+                    (PORT_BITS'(p) != w_port || w_excl))
+                    mon_valid[p] <= 1'b0;
+        end
+        if (reset || !EXCLUSIVE) mon_valid <= '0;
+    end
+
     always_ff @(posedge clk) begin
         case (state)
             IDLE: begin
-                if (|grant) begin
-                    port       <= grant_idx[1];
+                if (granted) begin
+                    port       <= grant_port;
                     last_grant <= grant_idx;
-                    if (grant_idx[0]) begin
-                        addr       <= s_axi_awaddr[grant_idx[1]];
-                        beats_left <= s_axi_awlen[grant_idx[1]];
+                    if (grant_wr) begin
+                        addr       <= s_axi_awaddr[grant_port];
+                        beats_left <= s_axi_awlen[grant_port];
+                        excl       <= EXCLUSIVE && s_axi_awlock[grant_port];
                         state      <= WR_DATA;
-                        if (s_axi_wvalid[grant_idx[1]]) begin
-                            data  <= s_axi_wdata[grant_idx[1]];
-                            strb  <= s_axi_wstrb[grant_idx[1]];
-                            state <= HAS_CACHE ? WR_CHECK : WR_WDF;
+                        if (s_axi_wvalid[grant_port]) begin
+                            data  <= s_axi_wdata[grant_port];
+                            strb  <= s_axi_wstrb[grant_port];
+                            state <= w_drop ? IDLE : HAS_CACHE ? WR_CHECK : WR_WDF;
                         end
                     end else begin
-                        addr       <= s_axi_araddr[grant_idx[1]];
-                        beats_left <= s_axi_arlen[grant_idx[1]];
+                        addr       <= s_axi_araddr[grant_port];
+                        beats_left <= s_axi_arlen[grant_port];
+                        excl       <= EXCLUSIVE && s_axi_arlock[grant_port];
                         state      <= HAS_CACHE ? RD_CHECK : RD_CMD;
                     end
                 end
@@ -360,7 +433,7 @@ module AXIMIGBridge #(
                 if (s_axi_wvalid[port]) begin
                     data  <= s_axi_wdata[port];
                     strb  <= s_axi_wstrb[port];
-                    state <= HAS_CACHE ? WR_CHECK : WR_WDF;
+                    state <= w_drop ? IDLE : HAS_CACHE ? WR_CHECK : WR_WDF;
                 end
             end
             WR_CHECK: begin
@@ -391,7 +464,7 @@ module AXIMIGBridge #(
 
         if (reset) begin
             state      <= IDLE;
-            last_grant <= 2'd0;
+            last_grant <= '0;
             next_way   <= '0;
         end
     end

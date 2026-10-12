@@ -41,18 +41,23 @@ public:
 // subordinate.  Responses take `latency` cycles, DRAM accesses `dram_latency`
 // cycles unless they hit in an optional model of the bridge's set associative
 // write-back cache of 16 byte lines (fpga/xilinx/AXIMIGBridge.sv).
+//
+// There is a single manager so exclusive writes succeed, except that with
+// `amo_retry` the first exclusive write directly after an exclusive read of
+// the same address (an AMO, an SC always has a fetch in between) fails as if
+// another hart had written the word, exercising the core's AMO retry.
 template <typename Model>
 class RtlCore : public RtlCoreBase
 {
 public:
     RtlCore(Soc &soc, uint32_t reset_vector, unsigned latency,
             unsigned dram_latency = 0, unsigned cache_sets = 0,
-            unsigned cache_ways = 1)
+            unsigned cache_ways = 1, bool amo_retry = false)
         : soc(soc), latency(latency),
           dram_latency(dram_latency ? dram_latency : latency),
           cache_sets(cache_sets), cache_ways(cache_ways),
           cache(size_t(cache_sets) * cache_ways), ctx(new VerilatedContext),
-          top(new Model(ctx.get()))
+          top(new Model(ctx.get())), amo_retry(amo_retry)
     {
         top->reset_vector = reset_vector;
         top->reset = 1;
@@ -104,14 +109,16 @@ public:
         bool w_hs = top->axi_wvalid && top->axi_wready;
         bool b_hs = top->axi_bvalid && top->axi_bready;
         uint32_t araddr = top->axi_araddr, arsize = top->axi_arsize;
+        bool arlock = top->axi_arlock;
         uint32_t awaddr = top->axi_awaddr, awsize = top->axi_awsize;
+        bool awlock = top->axi_awlock;
         uint32_t wdata = top->axi_wdata;
 
         clock();
         soc.tick();
 
-        update(ar_hs, r_hs, aw_hs, w_hs, b_hs, araddr, arsize, awaddr,
-               awsize, wdata);
+        update(ar_hs, r_hs, aw_hs, w_hs, b_hs, araddr, arsize, arlock,
+               awaddr, awsize, awlock, wdata);
     }
 
     bool halted() const override
@@ -154,18 +161,20 @@ private:
         top->axi_awready = !wr.busy && !wr.aw_have;
         top->axi_wready = !wr.busy && !wr.w_have;
         top->axi_bvalid = wr.busy && wr.wait == 0;
-        top->axi_bresp = wr.err ? 2 : 0;
+        top->axi_bresp = wr.err ? 2 : wr.excl ? 1 : 0;
     }
 
     void update(bool ar_hs, bool r_hs, bool aw_hs, bool w_hs, bool b_hs,
-                uint32_t araddr, uint32_t arsize, uint32_t awaddr,
-                uint32_t awsize, uint32_t wdata)
+                uint32_t araddr, uint32_t arsize, bool arlock,
+                uint32_t awaddr, uint32_t awsize, bool awlock, uint32_t wdata)
     {
         if (r_hs)
             rd.busy = false;
         else if (rd.busy && rd.wait)
             --rd.wait;
         if (ar_hs) {
+            excl_read = arlock;
+            excl_addr = araddr;
             uint32_t v = 0;
             rd.err = !soc.bus.read(araddr, 1u << arsize, v);
             rd.data = v << (8 * (araddr & 3));
@@ -181,6 +190,11 @@ private:
             wr.aw_have = true;
             wr.addr = awaddr;
             wr.size = awsize;
+            wr.excl = awlock;
+            wr.drop = amo_retry && awlock && excl_read &&
+                      excl_addr == awaddr && !retried;
+            retried = wr.drop;
+            excl_read = false;
         }
         if (w_hs) {
             wr.w_have = true;
@@ -191,7 +205,11 @@ private:
             uint32_t v = wr.data >> (8 * (wr.addr & 3));
             if (bytes < 4)
                 v &= (1u << (8 * bytes)) - 1;
-            wr.err = !soc.bus.write(wr.addr, bytes, v);
+            wr.err = false;
+            if (wr.drop)
+                wr.excl = false;
+            else
+                wr.err = !soc.bus.write(wr.addr, bytes, v);
             wr.aw_have = wr.w_have = false;
             wr.busy = true;
             wr.wait = access_latency(wr.addr, false);
@@ -241,8 +259,9 @@ private:
         bool busy = false, aw_have = false, w_have = false;
         unsigned wait = 0;
         uint32_t addr = 0, size = 0, data = 0;
-        bool err = false;
+        bool err = false, excl = false, drop = false;
     } wr;
+
 
 public:
     uint64_t cache_hits = 0, cache_misses = 0;
@@ -262,4 +281,7 @@ private:
     std::unique_ptr<VerilatedFstC> waves;
     RtlEvent ev{};
     uint64_t ncycles = 0;
+    bool amo_retry;
+    bool excl_read = false, retried = false;
+    uint32_t excl_addr = 0;
 };

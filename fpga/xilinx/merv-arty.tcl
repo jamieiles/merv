@@ -66,7 +66,11 @@ generate_target all [get_files MervArty.bd]
 read_verilog ./.gen/sources_1/bd/MervArty/hdl/MervArty_wrapper.v
 read_verilog "${origin_dir}/fpga/xilinx/Top.v"
 
-synth_design -top Top -include_dirs $include_dirs -flatten_hierarchy rebuilt \
+set top_generics {}
+if { [info exists ::env(MERV_CORE_CLK2X)] && $::env(MERV_CORE_CLK2X) } {
+    set top_generics [list -generic CORE_CLK2X=1]
+}
+synth_design -top Top -include_dirs $include_dirs -flatten_hierarchy rebuilt {*}$top_generics \
     -fsm_extraction one_hot -directive PerformanceOptimized \
     -verilog_define vivado=1
 write_checkpoint -force post_synth

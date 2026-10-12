@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include <array>
+#include <vector>
 
 #include "../Bus.h"
 
 // SiFive compatible PLIC with level triggered sources 1..31 and two contexts
-// (0 = M mode external interrupt, 1 = S mode external interrupt), matching
-// the RTL PLIC in fpga/common/PLIC.sv:
+// per hart (2h = M mode external interrupt, 2h + 1 = S mode external
+// interrupt), matching the RTL PLIC in fpga/common/PLIC.sv:
 //
 //   0x000000 + 4 * id         source priority
 //   0x001000                  pending bits
@@ -21,8 +21,12 @@
 class Plic : public Device
 {
 public:
-    static constexpr unsigned num_contexts = 2;
     static constexpr uint32_t priority_mask = 0x7;
+
+    explicit Plic(unsigned harts)
+        : num_contexts(2 * harts), enable(num_contexts), threshold(num_contexts)
+    {
+    }
 
     void set_source(unsigned id, bool level)
     {
@@ -107,9 +111,10 @@ private:
         return best_id;
     }
 
+    unsigned num_contexts;
     uint32_t levels = 0;
     uint32_t claimed = 0;
-    std::array<uint32_t, 32> priority{};
-    std::array<uint32_t, num_contexts> enable{};
-    std::array<uint32_t, num_contexts> threshold{};
+    uint32_t priority[32]{};
+    std::vector<uint32_t> enable;
+    std::vector<uint32_t> threshold;
 };

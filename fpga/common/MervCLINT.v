@@ -1,8 +1,13 @@
 // Copyright 2026 Jamie Iles
 // SPDX-License-Identifier: Apache-2.0
 //
-// CLINT: mtime/mtimecmp and msip.
-module MervCLINT (
+// CLINT: mtime, and mtimecmp and msip for each of NUM_HARTS (up to 4) harts,
+// msip at 0x0 + 4 * hart and mtimecmp at 0x4000 + 8 * hart.  The per-hart
+// interrupts are separate ports for the block design, those of harts
+// beyond NUM_HARTS are tied low.
+module MervCLINT #(
+    parameter NUM_HARTS = 1
+) (
     input  wire        refclk,
     input  wire        s_axi_aclk,
     input  wire        s_axi_aresetn,
@@ -27,22 +32,26 @@ module MervCLINT (
     input  wire        s_axi_rready,
     output wire [63:0] mtime,
     output wire        mtime_irq,
-    output reg         msip,
+    output wire        mtime_irq_1,
+    output wire        mtime_irq_2,
+    output wire        mtime_irq_3,
+    output wire        msip,
+    output wire        msip_1,
+    output wire        msip_2,
+    output wire        msip_3,
     output wire        sys_reset
 );
 
     localparam MSIP_OFFSET = 16'h0000;
-    localparam MTIMECMP_LOW_OFFSET = 16'h4000;
-    localparam MTIMECMP_HIGH_OFFSET = 16'h4004;
+    localparam MTIMECMP_OFFSET = 16'h4000;
     localparam MTIME_LOW_OFFSET = 16'hbff8;
     localparam MTIME_HIGH_OFFSET = 16'hbffc;
     localparam RESET_OFFSET = 16'hc000;
 
     wire        refclk_sync;
-    wire [63:0] mtimecmp;
-    reg  [63:0] mtimecmp_next;
     reg  [63:0] mtime_next;
-    reg         mtime_irq_next;
+    reg  [NUM_HARTS-1:0] msip_q;
+    wire [NUM_HARTS-1:0] irq_q;
     reg         s_axi_bvalid_next;
     reg         s_axi_rvalid_next;
     reg  [31:0] s_axi_rdata_next;
@@ -69,13 +78,6 @@ module MervCLINT (
             mtime_next[63:32] = s_axi_wdata;
     end
 
-    always @(*) begin
-        mtimecmp_next = mtimecmp;
-        if (s_axi_wvalid && s_axi_awvalid && s_axi_awaddr == MTIMECMP_LOW_OFFSET)
-            mtimecmp_next[31:0] = s_axi_wdata;
-        if (s_axi_wvalid && s_axi_awvalid && s_axi_awaddr == MTIMECMP_HIGH_OFFSET)
-            mtimecmp_next[63:32] = s_axi_wdata;
-    end
 
     always @(*) begin
         sys_reset_next = sys_reset;
@@ -83,26 +85,79 @@ module MervCLINT (
             sys_reset_next = s_axi_wdata[0];
     end
 
-    // Machine software interrupt for the single hart.
-    always @(posedge s_axi_aclk) begin
-        if (s_axi_wvalid && s_axi_awvalid && s_axi_awaddr == MSIP_OFFSET)
-            msip <= s_axi_wdata[0];
-        if (reset) msip <= 1'b0;
+    // Per hart msip and mtimecmp.
+    wire [63:0] mtimecmp[0:NUM_HARTS-1];
+    wire [31:0] hart_rd[0:NUM_HARTS-1];
+    reg  [31:0] hart_rdata;
+
+    genvar h;
+    generate
+        for (h = 0; h < NUM_HARTS; h = h + 1) begin : gen_hart
+            localparam [15:0] msip_offset = MSIP_OFFSET + 4 * h;
+            localparam [15:0] cmp_offset  = MTIMECMP_OFFSET + 8 * h;
+            reg  [63:0] mtimecmp_next;
+
+            // Machine software interrupt.
+            always @(posedge s_axi_aclk) begin
+                if (s_axi_wvalid && s_axi_awvalid && s_axi_awaddr == msip_offset)
+                    msip_q[h] <= s_axi_wdata[0];
+                if (reset) msip_q[h] <= 1'b0;
+            end
+
+            always @(*) begin
+                mtimecmp_next = mtimecmp[h];
+                if (s_axi_wvalid && s_axi_awvalid && s_axi_awaddr == cmp_offset)
+                    mtimecmp_next[31:0] = s_axi_wdata;
+                if (s_axi_wvalid && s_axi_awvalid && s_axi_awaddr == cmp_offset + 16'd4)
+                    mtimecmp_next[63:32] = s_axi_wdata;
+            end
+
+            MervDFF #(
+                .width(64)
+            ) mtimecmp_dff (
+                .clk  (s_axi_aclk),
+                .reset(reset),
+                .en   (1'b1),
+                .d    (mtimecmp_next),
+                .q    (mtimecmp[h])
+            );
+
+            assign hart_rd[h] =
+                s_axi_araddr == msip_offset ? {31'b0, msip_q[h]} :
+                s_axi_araddr == cmp_offset ? mtimecmp[h][31:0] :
+                s_axi_araddr == cmp_offset + 16'd4 ? mtimecmp[h][63:32] : 32'b0;
+
+            MervDFF mtime_irq_dff (
+                .clk  (s_axi_aclk),
+                .reset(reset),
+                .en   (1'b1),
+                .d    (mtime > mtimecmp[h]),
+                .q    (irq_q[h])
+            );
+        end
+    endgenerate
+
+    assign msip        = msip_q[0];
+    assign msip_1      = NUM_HARTS > 1 ? msip_q[1 % NUM_HARTS] : 1'b0;
+    assign msip_2      = NUM_HARTS > 2 ? msip_q[2 % NUM_HARTS] : 1'b0;
+    assign msip_3      = NUM_HARTS > 3 ? msip_q[3 % NUM_HARTS] : 1'b0;
+    assign mtime_irq   = irq_q[0];
+    assign mtime_irq_1 = NUM_HARTS > 1 ? irq_q[1 % NUM_HARTS] : 1'b0;
+    assign mtime_irq_2 = NUM_HARTS > 2 ? irq_q[2 % NUM_HARTS] : 1'b0;
+    assign mtime_irq_3 = NUM_HARTS > 3 ? irq_q[3 % NUM_HARTS] : 1'b0;
+
+    integer i;
+    always @(*) begin
+        hart_rdata = 32'b0;
+        for (i = 0; i < NUM_HARTS; i = i + 1) hart_rdata = hart_rdata | hart_rd[i];
     end
 
     always @(*) begin
         case (s_axi_araddr)
-            MSIP_OFFSET: s_axi_rdata_next = {31'b0, msip};
             MTIME_LOW_OFFSET: s_axi_rdata_next = mtime[31:0];
             MTIME_HIGH_OFFSET: s_axi_rdata_next = mtime[63:32];
-            MTIMECMP_LOW_OFFSET: s_axi_rdata_next = mtimecmp[31:0];
-            MTIMECMP_HIGH_OFFSET: s_axi_rdata_next = mtimecmp[63:32];
-            default: s_axi_rdata_next = 32'b0;
+            default: s_axi_rdata_next = hart_rdata;
         endcase
-    end
-
-    always @(*) begin
-        mtime_irq_next = mtime > mtimecmp;
     end
 
     always @(*) begin
@@ -156,23 +211,6 @@ module MervCLINT (
         .q    (s_axi_bvalid)
     );
 
-    MervDFF #(
-        .width(64)
-    ) mtimecmp_dff (
-        .clk  (s_axi_aclk),
-        .reset(reset),
-        .en   (1'b1),
-        .d    (mtimecmp_next),
-        .q    (mtimecmp)
-    );
-
-    MervDFF mtime_irq_dff (
-        .clk  (s_axi_aclk),
-        .reset(reset),
-        .en   (1'b1),
-        .d    (mtime_irq_next),
-        .q    (mtime_irq)
-    );
 
     MervDFF s_axi_rready_dff (
         .clk  (s_axi_aclk),

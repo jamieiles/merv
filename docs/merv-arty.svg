@@ -3,28 +3,31 @@
 <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker><marker id="ahs" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#333"/></marker></defs>
 <rect width="1200" height="860" fill="#ffffff"/>
 <text x="600" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#222">merv on the Arty S7-50</text>
-<text x="600" y="52" text-anchor="middle" font-size="13" font-weight="normal" fill="#444">xc7s50csga324-2 · one 81.25 MHz clock domain (MIG UI clock) · 256 MB DDR3L</text>
+<text x="600" y="52" text-anchor="middle" font-size="13" font-weight="normal" fill="#444">xc7s50csga324-2 · 81.25 MHz MIG UI clock, optional 162.5 MHz core clock · 256 MB DDR3L</text>
 <rect x="150" y="70" width="860" height="760" rx="12" fill="none" stroke="#888" stroke-width="1.4" stroke-dasharray="8 5"/>
 <text x="162" y="90" font-size="13" font-weight="600" fill="#666">FPGA</text>
-<rect x="180" y="100" width="220" height="120" rx="8" fill="#f2ebfa" stroke="#7a4bb3" stroke-width="1.6"/>
-<text x="290.0" y="121" text-anchor="middle" font-size="15" font-weight="600" fill="#7a4bb3">MervCoreAXI</text>
-<text x="290.0" y="145" text-anchor="middle" font-size="12" fill="#222">merv core + 8 KB F-RAM</text>
-<text x="290.0" y="161" text-anchor="middle" font-size="12" fill="#222">RV32IMA, M/S/U + F, Sv32</text>
-<text x="290.0" y="177" text-anchor="middle" font-size="12" fill="#222">TLB_ENTRIES 4 (8 tested)</text>
-<text x="290.0" y="193" text-anchor="middle" font-size="12" fill="#222">DRAM split off: m_dram_axi</text>
+<rect x="192" y="88" width="208" height="125" rx="8" fill="#f2ebfa" stroke="#7a4bb3" stroke-width="1.6"/>
+<rect x="186" y="94" width="208" height="125" rx="8" fill="#f2ebfa" stroke="#7a4bb3" stroke-width="1.6"/>
+<rect x="180" y="100" width="208" height="125" rx="8" fill="#f2ebfa" stroke="#7a4bb3" stroke-width="1.6"/>
+<text x="284.0" y="121" text-anchor="middle" font-size="15" font-weight="600" fill="#7a4bb3">MervCoreAXI × N</text>
+<text x="284.0" y="145" text-anchor="middle" font-size="12" fill="#222">merv core + 8 KB F-RAM each</text>
+<text x="284.0" y="161" text-anchor="middle" font-size="12" fill="#222">RV32IMA, M/S/U + F, Sv32</text>
+<text x="284.0" y="177" text-anchor="middle" font-size="12" fill="#222">TLB_ENTRIES 4 (8 tested)</text>
+<text x="284.0" y="193" text-anchor="middle" font-size="12" fill="#222">NUM_HARTS 1–4 (default 4)</text>
+<text x="284.0" y="209" text-anchor="middle" font-size="12" fill="#222">AXI exclusives when N &gt; 1</text>
 <rect x="180" y="260" width="220" height="75" rx="8" fill="#fff8d6" stroke="#a68a00" stroke-width="1.6"/>
 <text x="290.0" y="281" text-anchor="middle" font-size="15" font-weight="600" fill="#a68a00">AXI Interconnect</text>
-<text x="290.0" y="305" text-anchor="middle" font-size="12" fill="#222">area optimized, 1 → 6</text>
-<path d="M290,220 L290,260" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
-<text x="298" y="245" text-anchor="start" font-size="11" fill="#444">AXI4</text>
+<text x="290.0" y="305" text-anchor="middle" font-size="12" fill="#222">area optimized, N → 6</text>
+<path d="M284,225 L284,260" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="292" y="247" text-anchor="start" font-size="11" fill="#444">AXI4 × N</text>
 <rect x="180" y="380" width="220" height="150" rx="8" fill="#f2ebfa" stroke="#7a4bb3" stroke-width="1.6"/>
 <text x="190" y="401" text-anchor="start" font-size="15" font-weight="600" fill="#7a4bb3">Interrupts</text>
 <text x="190" y="424" text-anchor="start" font-size="11" fill="#222">PLIC 1: SPI (edge, latched)</text>
 <text x="190" y="439" text-anchor="start" font-size="11" fill="#222">PLIC 2: UART</text>
 <text x="190" y="454" text-anchor="start" font-size="11" fill="#222">PLIC 3: ENC28J60 (falling edge)</text>
 <text x="190" y="469" text-anchor="start" font-size="11" fill="#222">PLIC 4: SD host</text>
-<text x="190" y="484" text-anchor="start" font-size="11" fill="#222">PLIC → meip, seip</text>
-<text x="190" y="499" text-anchor="start" font-size="11" fill="#222">CLINT → mtip, msip</text>
+<text x="190" y="484" text-anchor="start" font-size="11" fill="#222">PLIC → meip, seip per hart</text>
+<text x="190" y="499" text-anchor="start" font-size="11" fill="#222">CLINT → mtip, msip per hart</text>
 <path d="M180,455 L165,455 L165,160 L180,160" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
 <rect x="180" y="555" width="220" height="120" rx="8" fill="#f1f1f1" stroke="#666666" stroke-width="1.6"/>
 <text x="190" y="576" text-anchor="start" font-size="15" font-weight="600" fill="#666666">Clocks and reset</text>
@@ -32,11 +35,12 @@
 <text x="190" y="614" text-anchor="start" font-size="11" fill="#222">MMCM: 200 MHz IDELAY ref,</text>
 <text x="190" y="629" text-anchor="start" font-size="11" fill="#222">10.156 MHz CLINT mtime</text>
 <text x="190" y="644" text-anchor="start" font-size="11" fill="#222">reset until DDR3 calibrated</text>
+<text x="190" y="659" text-anchor="start" font-size="11" fill="#222">162.5 MHz cores (optional)</text>
 <path d="M400,297 L440,297" fill="none" stroke="#333" stroke-width="2.2"/>
 <rect x="470" y="100" width="190" height="78" rx="8" fill="#fdf1e3" stroke="#c46f12" stroke-width="1.6"/>
 <text x="565.0" y="121" text-anchor="middle" font-size="14" font-weight="600" fill="#c46f12">Boot ROM</text>
-<text x="565.0" y="144" text-anchor="middle" font-size="11" fill="#222">64 KB BRAM</text>
-<text x="565.0" y="159" text-anchor="middle" font-size="11" fill="#222">loads files from SD</text>
+<text x="565.0" y="144" text-anchor="middle" font-size="11" fill="#222">64 KB BRAM, loads from SD</text>
+<text x="565.0" y="159" text-anchor="middle" font-size="11" fill="#222">releases harts 1..N-1</text>
 <text x="652" y="170" text-anchor="end" font-size="10" font-weight="normal" fill="#777">0x4000_0000</text>
 <path d="M440,139.0 L470,139.0" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
 <rect x="470" y="188" width="190" height="78" rx="8" fill="#f1f1f1" stroke="#666666" stroke-width="1.6"/>
@@ -46,14 +50,14 @@
 <path d="M440,227.0 L470,227.0" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
 <rect x="470" y="276" width="190" height="78" rx="8" fill="#f1f1f1" stroke="#666666" stroke-width="1.6"/>
 <text x="565.0" y="297" text-anchor="middle" font-size="14" font-weight="600" fill="#666666">CLINT</text>
-<text x="565.0" y="320" text-anchor="middle" font-size="11" fill="#222">mtime / mtimecmp</text>
-<text x="565.0" y="335" text-anchor="middle" font-size="11" fill="#222">msip</text>
+<text x="565.0" y="320" text-anchor="middle" font-size="11" fill="#222">shared mtime</text>
+<text x="565.0" y="335" text-anchor="middle" font-size="11" fill="#222">mtimecmp, msip per hart</text>
 <text x="652" y="346" text-anchor="end" font-size="10" font-weight="normal" fill="#777">0xF000_0000</text>
 <path d="M440,315.0 L470,315.0" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
 <rect x="470" y="364" width="190" height="78" rx="8" fill="#f1f1f1" stroke="#666666" stroke-width="1.6"/>
 <text x="565.0" y="385" text-anchor="middle" font-size="14" font-weight="600" fill="#666666">PLIC</text>
 <text x="565.0" y="408" text-anchor="middle" font-size="11" fill="#222">4 sources</text>
-<text x="565.0" y="423" text-anchor="middle" font-size="11" fill="#222">M and S contexts</text>
+<text x="565.0" y="423" text-anchor="middle" font-size="11" fill="#222">M and S context per hart</text>
 <text x="652" y="434" text-anchor="end" font-size="10" font-weight="normal" fill="#777">0xF800_0000</text>
 <path d="M440,403.0 L470,403.0" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
 <rect x="470" y="452" width="190" height="78" rx="8" fill="#f1f1f1" stroke="#666666" stroke-width="1.6"/>
@@ -70,13 +74,14 @@
 <path d="M440,139.0 L440,579.0" fill="none" stroke="#333" stroke-width="2.2"/>
 <path d="M400,140 L422,140 L422,290" fill="none" stroke="#333" stroke-width="1.6"/>
 <path d="M422,304 L422,700" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
-<text x="414" y="692" text-anchor="end" font-size="11" fill="#444">DRAM, direct</text>
+<text x="414" y="692" text-anchor="end" font-size="11" fill="#444">DRAM, direct, per hart</text>
 <rect x="180" y="700" width="480" height="115" rx="8" fill="#fdf1e3" stroke="#c46f12" stroke-width="1.6"/>
 <text x="420.0" y="721" text-anchor="middle" font-size="15" font-weight="600" fill="#c46f12">AXIMIGBridge (0x8000_0000)</text>
-<text x="420.0" y="745" text-anchor="middle" font-size="12" fill="#222">two AXI4 ports, CPU and SD DMA, arbitrated</text>
-<text x="420.0" y="761" text-anchor="middle" font-size="12" fill="#222">128 KB 4-way write-back cache, 16 B lines</text>
-<text x="420.0" y="777" text-anchor="middle" font-size="12" fill="#222">DMA goes through the cache so it stays coherent</text>
-<text x="420.0" y="793" text-anchor="middle" font-size="12" fill="#222">one MIG BL8 per line fill, write back or write miss</text>
+<text x="420.0" y="742" text-anchor="middle" font-size="12" fill="#222">AXI4 port per hart + SD DMA, round robin</text>
+<text x="420.0" y="757" text-anchor="middle" font-size="12" fill="#222">128 KB 4-way write-back cache, 16 B lines</text>
+<text x="420.0" y="772" text-anchor="middle" font-size="12" fill="#222">coherent: harts and DMA all go through the cache</text>
+<text x="420.0" y="787" text-anchor="middle" font-size="12" fill="#222">exclusive monitor per port for LR/SC and AMOs</text>
+<text x="420.0" y="802" text-anchor="middle" font-size="12" fill="#222">one MIG BL8 per line fill, write back or write miss</text>
 <path d="M600,618 L600,700" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)"/>
 <text x="608" y="663.0" text-anchor="start" font-size="11" fill="#444">SDMA</text>
 <rect x="700" y="700" width="280" height="115" rx="8" fill="#f1f1f1" stroke="#666666" stroke-width="1.6"/>
@@ -90,7 +95,7 @@
 <text x="1040" y="770" text-anchor="start" font-size="11" font-weight="normal" fill="#444">256 MB</text>
 <rect x="720" y="100" width="260" height="100" rx="8" fill="#f1f1f1" stroke="#666666" stroke-width="1.6"/>
 <text x="730" y="121" text-anchor="start" font-size="15" font-weight="600" fill="#666666">Debug (optional)</text>
-<text x="730" y="144" text-anchor="start" font-size="11" fill="#222">VIO over JTAG: PC, instruction,</text>
+<text x="730" y="144" text-anchor="start" font-size="11" fill="#222">VIO over JTAG (hart 0): PC, insn,</text>
 <text x="730" y="159" text-anchor="start" font-size="11" fill="#222">privilege, last trap, interrupts</text>
 <text x="730" y="174" text-anchor="start" font-size="11" fill="#222">LED: core halted</text>
 <path d="M660,227.0 L1030,227.0" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#ah)" marker-start="url(#ahs)"/>

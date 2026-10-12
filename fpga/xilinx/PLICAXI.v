@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Block design wrapper for the PLIC: AXI4-Lite registers, four sources and
-// the M (context 0) and S (context 1) external interrupts.
+// for each of NUM_HARTS (up to 4) harts the M (context 2 * hart) and S
+// (context 2 * hart + 1) external interrupts.  The interrupts of harts
+// beyond NUM_HARTS are tied low.
 //
 //   1: SPI controller (rising edge)
 //   2: UART (level)
@@ -13,7 +15,9 @@
 // latched here until a claim returns their ID.  The ENC28J60 interrupt must
 // be edge triggered: its line stays asserted until its interrupt work runs,
 // as a level it would interrupt continuously.
-module PLICAXI (
+module PLICAXI #(
+    parameter NUM_HARTS = 1
+) (
     // verilog_format: off
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 s_axi_aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME s_axi_aclk, ASSOCIATED_BUSIF s_axi, ASSOCIATED_RESET s_axi_aresetn" *)
@@ -47,6 +51,12 @@ module PLICAXI (
     input  wire        sdhci_irq,
     output wire        meip,
     output wire        seip,
+    output wire        meip_1,
+    output wire        seip_1,
+    output wire        meip_2,
+    output wire        seip_2,
+    output wire        meip_3,
+    output wire        seip_3,
     // Debug: the PLIC source inputs (4:1) and the raw ENC28J60 interrupt.
     output wire [ 4:0] dbg_sources
 );
@@ -55,12 +65,22 @@ module PLICAXI (
     wire [21:0] reg_waddr, reg_raddr;
     wire [31:0] reg_wdata, reg_rdata;
     wire [ 3:0] reg_wstrb;
-    wire [ 1:0] irq;
+    wire [2*NUM_HARTS-1:0] irq;
+    reg  [7:0]             irq_all;
+
+    // Registered, the PLIC's priority selection is a long path for cores
+    // on a faster clock, and zero extended to the four harts with ports.
+    always @(posedge s_axi_aclk) begin
+        // verilator lint_off WIDTHEXPAND
+        irq_all <= irq;
+        // verilator lint_on WIDTHEXPAND
+        if (!s_axi_aresetn) irq_all <= 8'b0;
+    end
 
     // Edge triggered sources are latched until a claim returns their ID
-    // (the claim registers are at 0x200004 + 0x1000 * ctx).
+    // (the claim registers are at 0x200004 + 0x1000 * ctx, ctx < 8).
     reg  spi_irq_last, spi_pending, eth_int_n_last, eth_pending;
-    wire claim_rd = reg_rd && reg_raddr[21:13] == 9'h100 &&
+    wire claim_rd = reg_rd && reg_raddr[21:15] == 7'h40 &&
                     reg_raddr[11:0] == 12'h004;
 
     always @(posedge s_axi_aclk) begin
@@ -81,8 +101,14 @@ module PLICAXI (
     assign dbg_sources = {eth_int_n, sdhci_irq, eth_pending, uart_irq, spi_pending};
     assign s_axi_bresp = 2'b00;
     assign s_axi_rresp = 2'b00;
-    assign meip        = irq[0];
-    assign seip        = irq[1];
+    assign meip        = irq_all[0];
+    assign seip        = irq_all[1];
+    assign meip_1      = irq_all[2];
+    assign seip_1      = irq_all[3];
+    assign meip_2      = irq_all[4];
+    assign seip_2      = irq_all[5];
+    assign meip_3      = irq_all[6];
+    assign seip_3      = irq_all[7];
 
     AXILiteRegs #(
         .addr_bits(22)
@@ -115,7 +141,7 @@ module PLICAXI (
 
     PLIC #(
         .num_sources (4),
-        .num_contexts(2)
+        .num_contexts(2 * NUM_HARTS)
     ) plic (
         .clk      (s_axi_aclk),
         .reset    (~s_axi_aresetn),

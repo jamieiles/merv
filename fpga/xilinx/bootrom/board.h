@@ -13,3 +13,12 @@
 
 /* The SD host controller's base clock, the MIG UI clock. */
 #define BOARD_SDHCI_BASE_KHZ 81248
+
+/* SMP: harts other than 0 wait for their CLINT msip before entering OpenSBI. */
+#define CLINT_BASE 0xf0000000
+#define MAX_HARTS 4
+#define MIP_MSIP (1 << 3)
+
+/* OpenSBI (fw_jump) entry and the device tree it is passed. */
+#define PAYLOAD_ENTRY 0x80000000
+#define PAYLOAD_DTB 0x80200000

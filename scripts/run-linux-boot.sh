@@ -6,15 +6,19 @@
 # that it prints "Hello, world" and powers off cleanly.  Exits with 77 (skip)
 # if the software hasn't been built with scripts/build-software.sh.
 #
-# usage: run-linux-boot.sh <merv-sim> <bootrom.elf> <sw_dir> [sim args...]
+# usage: run-linux-boot.sh <merv-sim> <bootrom.elf> <sw_dir|boot-args> [sim args...]
+#
+# The simulator arguments come from <sw_dir>/boot-args, or the given file
+# (such as <sw_dir>/boot-args-smp4).
 set -uo pipefail
 
 SIM="$1"
 BOOTROM="$2"
-SW="$3"
+ARGS_FILE="$3"
 shift 3
+[ -d "$ARGS_FILE" ] && ARGS_FILE="$ARGS_FILE/boot-args"
 
-if [ ! -f "$SW/boot-args" ]; then
+if [ ! -f "$ARGS_FILE" ]; then
     echo "software not built, run scripts/build-software.sh"
     exit 77
 fi
@@ -22,7 +26,7 @@ fi
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 
-"$SIM" --elf "$BOOTROM" $(cat "$SW/boot-args") --no-echo --uart-log "$LOG" \
+"$SIM" --elf "$BOOTROM" $(cat "$ARGS_FILE") --no-echo --uart-log "$LOG" \
     --max-steps 1000000000 --stats "$@"
 status=$?
 tail -5 "$LOG"

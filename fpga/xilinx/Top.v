@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 `timescale 1ns / 1ps
 
-module Top (
+module Top #(
+    // Run the cores on a 2x UI clock (162.5MHz).
+    parameter CORE_CLK2X = 0
+) (
     input  wire        clk,
     input  wire        ext_reset,
     input  wire        uart_rtl_0_rxd,
@@ -210,9 +213,11 @@ module Top (
     // the CLINT reference clock (650MHz / 64 = 10.15625MHz).  The MIG PLL is
     // only reset by sys_rst so the UI clock runs before the reference clock
     // is available, as it did with the internal MMCM.
-    wire        clkgen_fb;
+    wire        clkgen_fb, clkgen_fb_in;
     wire        clkgen_ref;
     wire        clkgen_clint;
+    wire        clkgen_2x;
+    wire        core_clk;
     wire        clkgen_locked;
     reg  [16:0] clkgen_rst_count = 17'h1ffff;
 
@@ -226,13 +231,15 @@ module Top (
         .DIVCLK_DIVIDE   (1),
         .CLKFBOUT_MULT_F (8.0),
         .CLKOUT0_DIVIDE_F(3.25),
-        .CLKOUT1_DIVIDE  (64)
+        .CLKOUT1_DIVIDE  (64),
+        .CLKOUT2_DIVIDE  (4)
     ) clkgen (
         .CLKIN1  (ui_clk),
-        .CLKFBIN (clkgen_fb),
+        .CLKFBIN (clkgen_fb_in),
         .CLKFBOUT(clkgen_fb),
         .CLKOUT0 (clkgen_ref),
         .CLKOUT1 (clkgen_clint),
+        .CLKOUT2 (clkgen_2x),
         .LOCKED  (clkgen_locked),
         .RST     (|clkgen_rst_count),
         .PWRDWN  (1'b0)
@@ -250,6 +257,27 @@ module Top (
         .I(clkgen_clint),
         .O(clint_refclk)
     );
+
+    // The cores' clock (650MHz / 4 = 162.5MHz) is synchronous to the UI
+    // clock: with the feedback through a BUFG the MMCM compensates the
+    // clock tree so that the two are phase aligned at the flops.  Otherwise
+    // the cores run on the UI clock.
+    generate
+        if (CORE_CLK2X != 0) begin : gen_clk2x
+            BUFG clkgen_fb_bufg (
+                .I(clkgen_fb),
+                .O(clkgen_fb_in)
+            );
+
+            BUFG core_clk_bufg (
+                .I(clkgen_2x),
+                .O(core_clk)
+            );
+        end else begin : gen_clk1x
+            assign clkgen_fb_in = clkgen_fb;
+            assign core_clk     = ui_clk;
+        end
+    endgenerate
 
     mig_native mig (
         .ddr3_addr          (ddr3_addr),
@@ -296,6 +324,7 @@ module Top (
 
     MervArty_wrapper inst (
         .ui_clk             (ui_clk),
+        .core_clk           (core_clk),
         .clint_refclk       (clint_refclk),
         // Hold the system in reset until the DRAM is calibrated
         .ddr_ready          (init_calib_complete & ~ui_clk_sync_rst),

@@ -68,5 +68,11 @@ foreach(cfg ${MERV_TEST_CONFIGS})
                      ${MERV_SW_DIR} ${args})
     set_tests_properties(iss-linux-boot-${name} PROPERTIES SKIP_RETURN_CODE 77)
 endforeach()
+add_test(NAME iss-linux-boot-smp4
+         COMMAND ${PROJECT_SOURCE_DIR}/scripts/run-linux-boot.sh
+                 $<TARGET_FILE:merv-sim>
+                 ${CMAKE_BINARY_DIR}/sim/bootrom/sim-bootrom.elf
+                 ${MERV_SW_DIR}/boot-args-smp4)
+set_tests_properties(iss-linux-boot-smp4 PROPERTIES SKIP_RETURN_CODE 77)
 
 add_subdirectory(rtl)

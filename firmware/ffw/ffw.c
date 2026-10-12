@@ -237,6 +237,9 @@ static int emul_csr_read(uint32_t addr, uint32_t pprv, uint32_t *val)
     *val = 0;
 
     switch (addr) {
+    case 0xf14: // mhartid
+        *val = csr_read(CSR_FCONFIG) >> 24;
+        return 1;
     case 0x301: // misa: RV32 A I M S U
         *val = 0x40000000u | (1u << 0) | (1u << 8) | (1u << 12) |
                (1u << 18) | (1u << 20);
@@ -244,7 +247,6 @@ static int emul_csr_read(uint32_t addr, uint32_t pprv, uint32_t *val)
     case 0xf11: // mvendorid
     case 0xf12: // marchid
     case 0xf13: // mimpid
-    case 0xf14: // mhartid
     case 0xf15: // mconfigptr
     case 0x310: // mstatush
     case 0x312: // medelegh

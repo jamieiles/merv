@@ -86,6 +86,7 @@ Hart::Hart(const Config &cfg, Bus &bus)
     // time, with one entry the refills would evict each other forever.
     if (cfg.tlb_entries < 2 || cfg.tlb_entries > 16)
         throw std::invalid_argument("TLB entries must be 2-16");
+    bus.add_reservation(&reservation);
     reset();
 }
 
@@ -116,7 +117,7 @@ void Hart::reset()
 
     for (auto &e : tlb)
         e = TlbEntry{};
-    reservation_valid = false;
+    reservation.valid = false;
 }
 
 void Hart::load_fram(uint32_t addr, const uint8_t *data, size_t len)
@@ -265,7 +266,7 @@ void Hart::raise(uint32_t cause, uint32_t tval)
 void Hart::take_trap(uint32_t cause, bool interrupt, uint32_t epc,
                      uint32_t tval)
 {
-    reservation_valid = false;
+    reservation.valid = false;
     info.trap = true;
     info.interrupt = interrupt;
     info.cause = cause;
@@ -432,9 +433,14 @@ bool Hart::phys_write(uint32_t pa, unsigned size, uint32_t val)
             memcpy(&fram[off], &val, size);
         else if (!bus.write(pa, size, val))
             fstatus |= fstatus_bits::BERR;
+        else
+            bus.snoop_store(&reservation, pa);
         return true;
     }
-    return bus.write(pa, size, val);
+    if (!bus.write(pa, size, val))
+        return false;
+    bus.snoop_store(&reservation, pa);
+    return true;
 }
 
 bool Hart::fetch(uint32_t &insn)
@@ -471,8 +477,8 @@ bool Hart::load(uint32_t va, unsigned size, uint32_t &val, bool reserve)
         return false;
     }
     if (reserve) {
-        reservation_valid = true;
-        reservation_addr = pa;
+        reservation.valid = true;
+        reservation.addr = pa;
     }
     info.mem = true;
     info.mem_va = va;
@@ -772,8 +778,8 @@ void Hart::exec_amo(uint32_t insn)
         return;
 
     if (f5 == 3) {
-        bool ok = reservation_valid && reservation_addr == pa;
-        reservation_valid = false;
+        bool ok = reservation.valid && reservation.addr == pa;
+        reservation.valid = false;
         if (ok) {
             if (!phys_write(pa, 4, rs(rs2_of(insn)))) {
                 raise(exc::store_access, addr);
@@ -999,7 +1005,8 @@ uint32_t Hart::csr_read(uint16_t addr)
     case csr::fbootvec: return cfg.reset_vector;
     case csr::fconfig:
         return cfg.tlb_entries | (cfg.native_amo ? 1u << 8 : 0) |
-               (cfg.hw_div ? 1u << 9 : 0) | (cfg.barrel_shift ? 1u << 10 : 0);
+               (cfg.hw_div ? 1u << 9 : 0) | (cfg.barrel_shift ? 1u << 10 : 0) |
+               (cfg.hart_id << 24);
     default: return 0;
     }
 }

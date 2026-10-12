@@ -4,7 +4,9 @@
 #
 # Build the software stack for the merv simulation platform: OpenSBI
 # (generic platform, fw_jump), a Linux kernel and an initramfs that prints
-# "Hello, world" and powers off, plus the device tree.
+# "Hello, world" and powers off, plus the device tree.  The arguments for
+# merv-sim are written to boot-args, and for 4 harts (an SMP kernel and
+# device tree) to boot-args-smp4.
 #
 # usage: build-software.sh [out_dir]
 #
@@ -63,27 +65,47 @@ if [ -z "${LINUX_SRC:-}" ]; then
     fi
 fi
 
+# build_kernel <build dir> <config fragments...>: tinyconfig plus the
+# fragments, later fragments override earlier ones.
+build_kernel() {
+    local dir="$1"
+    shift
+    local kmake=(make -s -C "$LINUX_SRC" O="$dir" ARCH=riscv
+                 CROSS_COMPILE="$LINUX_CROSS" -j"$JOBS")
+    local stale=0 frag
+    [ -f "$dir/.config" ] || stale=1
+    for frag in "$@"; do
+        [ "$frag" -nt "$dir/.config" ] && stale=1
+    done
+    if [ $stale -eq 1 ]; then
+        mkdir -p "$dir"
+        "${kmake[@]}" tinyconfig
+        "$LINUX_SRC/scripts/kconfig/merge_config.sh" -m -O "$dir" \
+            "$dir/.config" "$@" >/dev/null
+        "${kmake[@]}" olddefconfig
+        # Make sure that the fragments were applied (the last setting of
+        # each option wins).
+        cat "$@" | grep '^CONFIG_' | tac | awk -F= '!seen[$1]++' |
+        while IFS= read -r line; do
+            case "$line" in
+            CONFIG_*=n) ! grep -qx "${line%=n}=y" "$dir/.config" ||
+                        echo "warning: $line not applied" ;;
+            CONFIG_*)   grep -qx "$line" "$dir/.config" ||
+                        echo "warning: $line not applied" ;;
+            esac
+        done
+    fi
+    "${kmake[@]}" Image
+}
+
 echo "== Linux ($LINUX_SRC)"
-KMAKE=(make -s -C "$LINUX_SRC" O="$OUT/linux" ARCH=riscv
-       CROSS_COMPILE="$LINUX_CROSS" -j"$JOBS")
-if [ ! -f "$OUT/linux/.config" ] ||
-   [ "$TOP/platform/linux-merv.config" -nt "$OUT/linux/.config" ]; then
-    "${KMAKE[@]}" tinyconfig
-    "$LINUX_SRC/scripts/kconfig/merge_config.sh" -m -O "$OUT/linux" \
-        "$OUT/linux/.config" "$TOP/platform/linux-merv.config" >/dev/null
-    "${KMAKE[@]}" olddefconfig
-    # Make sure that the fragment was applied.
-    while IFS= read -r line; do
-        case "$line" in
-        CONFIG_*=n) ! grep -qx "${line%=n}=y" "$OUT/linux/.config" ||
-                    echo "warning: $line not applied" ;;
-        CONFIG_*)   grep -qx "$line" "$OUT/linux/.config" ||
-                    echo "warning: $line not applied" ;;
-        esac
-    done < "$TOP/platform/linux-merv.config"
-fi
-"${KMAKE[@]}" Image
+build_kernel "$OUT/linux" "$TOP/platform/linux-merv.config"
 cp "$OUT/linux/arch/riscv/boot/Image" "$OUT/Image"
+
+echo "== Linux SMP"
+build_kernel "$OUT/linux-smp" "$TOP/platform/linux-merv.config" \
+    "$TOP/platform/linux-merv-smp.config"
+cp "$OUT/linux-smp/arch/riscv/boot/Image" "$OUT/Image-smp"
 
 echo "== initramfs"
 "${LINUX_CROSS}gcc" -march=rv32ima_zicsr -mabi=ilp32 -static -nostdlib \
@@ -95,14 +117,25 @@ sed "s|@INIT@|$OUT/init|" "$TOP/platform/initramfs/initramfs.list" \
 echo "== device tree"
 INITRD_SIZE=$(stat -c %s "$OUT/initramfs.cpio")
 INITRD_END=$(printf "0x%x" $((INITRD_ADDR + INITRD_SIZE)))
-cpp -P -nostdinc -undef -x assembler-with-cpp \
-    -DINITRD_START=$INITRD_ADDR -DINITRD_END=$INITRD_END \
-    "$TOP/platform/merv-sim.dts" | dtc -q -I dts -O dtb -o "$OUT/merv-sim.dtb"
+for harts in 1 4; do
+    cpp -P -nostdinc -undef -x assembler-with-cpp -I "$TOP/platform" \
+        -DINITRD_START=$INITRD_ADDR -DINITRD_END=$INITRD_END \
+        -DNUM_HARTS=$harts "$TOP/platform/merv-sim.dts" |
+        dtc -q -I dts -O dtb -o "$OUT/merv-sim-$harts.dtb"
+done
+cp "$OUT/merv-sim-1.dtb" "$OUT/merv-sim.dtb"
 
 cat > "$OUT/boot-args" <<ARGS
 --binary $OUT/fw_jump.bin@0x80000000
 --binary $OUT/Image@$FW_JUMP_ADDR
 --binary $OUT/merv-sim.dtb@$DTB_ADDR
+--binary $OUT/initramfs.cpio@$INITRD_ADDR
+ARGS
+cat > "$OUT/boot-args-smp4" <<ARGS
+--harts 4
+--binary $OUT/fw_jump.bin@0x80000000
+--binary $OUT/Image-smp@$FW_JUMP_ADDR
+--binary $OUT/merv-sim-4.dtb@$DTB_ADDR
 --binary $OUT/initramfs.cpio@$INITRD_ADDR
 ARGS
 echo "== done: $OUT"

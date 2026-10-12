@@ -44,7 +44,7 @@ for the architecture specification.
 - The F-RAM, both GPR banks and the CSRs that are only accessed by software
   or on traps share a single dual port block RAM read with the output
   register: the registers are the top 512 bytes of the F-RAM so the firmware
-  accesses the trapping code's registers with ordinary loads aPnd stores.P
+  accesses the trapping code's registers with ordinary loads and stores.
 - Multiplier on DSP48s, iterative unsigned divider.
 - Single AXI4 manager port for instructions and data with one transaction in
   flight, no caches.
@@ -58,7 +58,9 @@ Vivado 2025.2, xc7s50csga324-2:
 | Core out of context (`fpga/ooc`)       | 1420 | 1081 | 2      | 4   | 191 MHz (WNS -0.23ns @ 5ns) |
 | Core out of context, TLB 8, barrel     | 1598 | 1261 | 2      | 4   | 193 MHz (WNS -0.19ns @ 5ns) |
 | Core in the Arty system (TLB 8, barrel) | 1544 | 1354 | 2     | 4   | met @ 81.25MHz (WNS +0.86ns) |
-| Arty system total (incl. MIG, SD, SPI) | 11459 | 10326 | 56   | 4   |                             |
+| Arty system total (incl. MIG, SD, SPI) | 11303 | 10326 | 56   | 4   | met @ 81.25MHz (WNS +0.73ns) |
+| Arty system, 4 harts (TLB 8, barrel)   | 17488 | 14517 | 62   | 16  | met @ 81.25MHz (WNS +0.74ns) |
+| 4 harts, cores at 2x (162.5MHz)        | 17530 | 15125 | 62   | 16  | met @ 162.5MHz (WNS +0.002ns) |
 
 The divider and the shifter, out of context with the default `TLB_ENTRIES=4`
 and `NATIVE_AMO=1`, and the cycles to boot Linux to a hello world init in
@@ -147,8 +149,14 @@ the ISS) in two:
 - riscv-tests rv32ui/um/ua/si/mi, physical and virtual memory variants,
 - riscv-arch-test 2.6.2 I, M, Zifencei and privilege,
 - the directed F mode tests,
-- the DDR3 bridge unit tests,
-- a Linux boot on the ISS (if the software has been built).
+- the DDR3 bridge (arbitration, exclusive monitors) and CLINT unit tests,
+- an SMP atomics test on the ISS with 4 harts,
+- Linux boots on the ISS, single hart and SMP with 4 harts (if the software
+  has been built).
+
+The `rtl-excl` configuration builds the core with `AXI_EXCLUSIVE=1` (as for
+SMP) and fails the first exclusive write of every AMO (`--amo-retry`) to
+exercise the core's retry.
 
 ### Software
 
@@ -162,7 +170,8 @@ Linux is built from a shared clone of `~/src/linux` (`LINUX_REPO`) at v6.9
     _build/sim/merv-sim --elf _build/sim/bootrom/sim-bootrom.elf $(cat _build/sw/boot-args)
 
 boots OpenSBI and Linux on the ISS (~10s), printing "Hello, world" from the
-initramfs before powering off.  `--rtl` simulates the Verilated RTL instead,
+initramfs before powering off.  `$(cat _build/sw/boot-args-smp4)` boots an SMP
+kernel on 4 harts (`--harts 4`, ISS only).  `--rtl` simulates the Verilated RTL instead,
 `--cosim` simulates the RTL checked instruction by instruction against the
 ISS (~10 minutes for the Linux boot).  `--help` lists the other options
 (tracing, waveforms, configuration).
@@ -171,22 +180,38 @@ ISS (~10 minutes for the Linux boot).  `--help` lists the other options
 
 ![merv Arty S7-50 block diagram](docs/merv-arty.svg)
 
-The Arty S7-50 system has a 16550 UART, PLIC, CLINT, the SD host controller
-(SDMA into DRAM), Quad SPI with the ENC28J60 and the DDR3 through a MIG native
-interface bridge, all in the 81.25MHz MIG UI clock domain.  The bridge has a
-128KB 4-way set associative write-back cache (16 byte lines, no write
-allocate) that both the core and the SD DMA go through, so DMA is coherent
-without any cache maintenance.  The core's DRAM accesses are split off in
+The Arty S7-50 system has `MERV_NUM_HARTS` (1-4, default 4) cores, a 16550
+UART, PLIC, CLINT, the SD host controller (SDMA into DRAM), Quad SPI with the
+ENC28J60 and the DDR3 through a MIG native interface bridge, all in the
+81.25MHz MIG UI clock domain.  The bridge has a 128KB 4-way set associative
+write-back cache (16 byte lines, no write allocate) that the cores and the SD
+DMA all go through, so DMA and the harts are coherent without any cache
+maintenance.  It arbitrates its ports round robin a transaction at a time and
+has an exclusive monitor per port for the atomics.  With no caches in the
+cores every instruction fetch goes to the bridge, which limits scaling: it
+saturates at around 4-5 harts.  The boot ROM runs on hart 0, the other harts
+wait for their CLINT `msip` and then enter OpenSBI.  The cores' DRAM accesses are split off in
 `MervCoreAXI` and go straight to the bridge rather than through the
 interconnect, so an instruction fetch or load that hits in the cache takes 4
 cycles from the fetch/translate state to the data (6 with the core's TLB
 lookup).  Writes are posted: the bridge takes the data with the address and
 responds straight away.
 
-    scripts/build-arty-sdcard.sh       # OPENSBI.BIN, IMAGE[GZ].BIN, MERV.DTB
+    scripts/build-arty-sdcard.sh       # OPENSBI.BIN, IMAGE[GZ].BIN, MERV.DTB ($MERV_NUM_HARTS harts)
     mkdir -p _build/vivado && cd _build/vivado
     vivado -mode batch -source ../../fpga/xilinx/merv-arty.tcl
     vivado -mode tcl -source ../../fpga/xilinx/program.tcl
+
+With `MERV_CORE_CLK2X=1` the cores run at 162.5MHz, twice the UI clock and
+phase aligned with it (from the MMCM in `fpga/xilinx/Top.v`), with the rest
+of the system at 81.25MHz.  `MervAXIClk2x` crosses each core's AXI manager
+into the UI clock domain through registers on both sides, so the paths
+between the domains are timed as one fast cycle without exceptions.  The
+DRAM accesses take about 2.5 more fast cycles than at 1x, but with 4 harts
+Linux reaches the login prompt about 1.7x sooner (16s rather than 33s to
+init) and a 4 thread atomics stress test runs 1.6x faster.  The cores only
+just close timing at 162.5MHz (their critical path is the ALU into the
+register file BRAM).
 
 The boot ROM loads the files from a FAT16 first partition of the SD card
 (Pmod MicroSD in JC) with the root filesystem on the second partition.  It

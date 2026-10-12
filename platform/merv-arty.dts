@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0+
 // merv on the Arty S7-50, see fpga/xilinx/MervArtyBD.tcl for the memory map.
+// Preprocessed with cpp, NUM_HARTS must match the bitstream's MERV_NUM_HARTS
+// and RNG_SEED, if defined, is the comma free list of bytes for rng-seed.
 /dts-v1/;
+
+#include "merv-cpus.dtsi"
 
 / {
     #address-cells = <1>;
@@ -14,10 +18,14 @@
 
     chosen {
         // The core is slow enough that systemd's default unit start timeouts
-        // expire (udevd coldplug in particular), and there is no network
-        // configuration so the networking services are masked.
-        bootargs = "console=ttyS0,115200 earlycon root=/dev/mmcblk0p2 ro systemd.default_timeout_start_sec=900 systemd.mask=systemd-networkd.service systemd.mask=systemd-networkd-wait-online.service systemd.mask=systemd-resolved.service systemd.mask=systemd-timesyncd.service systemd.mask=NetworkManager.service systemd.mask=NetworkManager-wait-online.service";
+        // expire (udevd coldplug in particular).
+        bootargs = "console=ttyS0,115200 earlycon root=/dev/mmcblk0p2 ro systemd.default_timeout_start_sec=900";
         stdout-path = "serial0:115200n8";
+#ifdef RNG_SEED
+        // Seeds the CRNG at boot rather than waiting for interrupt entropy,
+        // which takes a long time on the slow core.
+        rng-seed = /bits/ 8 <RNG_SEED>;
+#endif
     };
 
     cpus {
@@ -25,23 +33,7 @@
         #size-cells = <0>;
         timebase-frequency = <10140625>;
 
-        cpu0: cpu@0 {
-            device_type = "cpu";
-            reg = <0>;
-            status = "okay";
-            compatible = "jamieiles,merv", "riscv";
-            riscv,isa = "rv32ima_zicsr_zifencei_zicntr";
-            riscv,isa-base = "rv32i";
-            riscv,isa-extensions = "i", "m", "a", "zicsr", "zifencei",
-                                   "zicntr";
-            mmu-type = "riscv,sv32";
-
-            cpu0_intc: interrupt-controller {
-                #interrupt-cells = <1>;
-                interrupt-controller;
-                compatible = "riscv,cpu-intc";
-            };
-        };
+        MERV_CPUS
     };
 
     memory@80000000 {
@@ -63,7 +55,7 @@
 
         clint0: clint@f0000000 {
             compatible = "sifive,clint0", "riscv,clint0";
-            interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
+            interrupts-extended = MERV_CLINT_IRQS;
             reg = <0xf0000000 0xc000>;
         };
 
@@ -86,7 +78,7 @@
             #interrupt-cells = <1>;
             interrupt-controller;
             reg = <0xf8000000 0x400000>;
-            interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;
+            interrupts-extended = MERV_PLIC_IRQS;
             riscv,ndev = <4>;
         };
 
@@ -118,8 +110,11 @@
             interrupt-parent = <&plic>;
             interrupts = <1>;
 
+            // There is no network configuration, disabled so that the
+            // networking services don't wait for it.
             eth0: eth@0 {
                 compatible = "microchip,enc28j60";
+                status = "disabled";
                 reg = <0>;
                 interrupt-parent = <&plic>;
                 // Falling edge, latched until claimed by PLICAXI.

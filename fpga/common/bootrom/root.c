@@ -18,7 +18,7 @@ static const char *banner =
     "░██   ░    ░██ ░██       ░██  ░░██    ░░████\n"
     "░██        ░██ ░████████ ░██   ░░██    ░░██\n"
     "░░         ░░  ░░░░░░░░  ░░     ░░      ░░\n";
-static const uint32_t entrypoint = 0x80000000;
+static const uint32_t entrypoint = PAYLOAD_ENTRY;
 
 struct boot_file {
     const uint16_t *name;
@@ -40,19 +40,24 @@ void panic(const char *str)
 
 static void jump_payload(void)
 {
+    // Release the other harts (waiting in entry.S), the CLINT ignores the
+    // msip of harts that don't exist.
+    for (unsigned h = 1; h < MAX_HARTS; ++h)
+        ((volatile uint32_t *)CLINT_BASE)[h] = 1;
+
     asm volatile(
         "fence.i\n\t"
         "li a0, 0\n\t"
         "addi a1, %1, 0\n\t"
         "addi s0, %0, 0\n\t"
         "jr s0" ::"r"(entrypoint),
-        "r"(0x80200000));
+        "r"(PAYLOAD_DTB));
 }
 
 extern char load_scratch[];
 
 static const struct boot_file boot_files[] = {
-    {.name = u"OPENSBI.BIN", .load_address = 0x80000000, .required = 1},
+    {.name = u"OPENSBI.BIN", .load_address = PAYLOAD_ENTRY, .required = 1},
     // Prefer the uncompressed kernel, decompressing on the core is slow.
     {.name = u"IMAGE.BIN", .load_address = 0x80400000, .required = 0},
     {.name = u"IMAGEGZ.BIN",
@@ -60,7 +65,7 @@ static const struct boot_file boot_files[] = {
      .required = 0,
      .compressed = 1,
      .fallback = 1},
-    {.name = BOARD_DTB_NAME, .load_address = 0x80200000, .required = 1},
+    {.name = BOARD_DTB_NAME, .load_address = PAYLOAD_DTB, .required = 1},
     {}};
 
 long tinflate(const void *compressed_data,

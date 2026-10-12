@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0+
 // Reference simulation platform for merv-sim.  Preprocessed with cpp:
-// INITRD_START/INITRD_END locate the preloaded initramfs.
+// INITRD_START/INITRD_END locate the preloaded initramfs, NUM_HARTS (default
+// 1) is the number of harts (merv-sim --harts).
 /dts-v1/;
+
+#include "merv-cpus.dtsi"
 
 / {
     #address-cells = <1>;
@@ -25,23 +28,7 @@
         #size-cells = <0>;
         timebase-frequency = <10000000>;
 
-        cpu0: cpu@0 {
-            device_type = "cpu";
-            reg = <0>;
-            status = "okay";
-            compatible = "jamieiles,merv", "riscv";
-            riscv,isa = "rv32ima_zicsr_zifencei_zicntr";
-            riscv,isa-base = "rv32i";
-            riscv,isa-extensions = "i", "m", "a", "zicsr", "zifencei",
-                                   "zicntr";
-            mmu-type = "riscv,sv32";
-
-            cpu0_intc: interrupt-controller {
-                #interrupt-cells = <1>;
-                interrupt-controller;
-                compatible = "riscv,cpu-intc";
-            };
-        };
+        MERV_CPUS
     };
 
     memory@80000000 {
@@ -71,7 +58,7 @@
 
         clint0: clint@f0000000 {
             compatible = "sifive,clint0", "riscv,clint0";
-            interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
+            interrupts-extended = MERV_CLINT_IRQS;
             reg = <0xf0000000 0xc000>;
         };
 
@@ -86,7 +73,7 @@
             #interrupt-cells = <1>;
             interrupt-controller;
             reg = <0xf8000000 0x400000>;
-            interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;
+            interrupts-extended = MERV_PLIC_IRQS;
             riscv,ndev = <31>;
         };
 

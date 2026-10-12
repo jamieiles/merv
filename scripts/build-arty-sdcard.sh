@@ -9,6 +9,9 @@
 # shared with the simulation build (scripts/build-software.sh, which must be
 # run first), the kernel is built with platform/linux-arty-defconfig.
 #
+# The device tree has $MERV_NUM_HARTS harts (default 4), which must match
+# the bitstream, and a new random rng-seed on each build.
+#
 # usage: build-arty-sdcard.sh [sw_dir]
 set -euo pipefail
 
@@ -31,7 +34,8 @@ KMAKE=(make -s -C "$LINUX_SRC" O="$SW/linux-arty" ARCH=riscv
 mkdir -p "$SW/linux-arty"
 cp "$TOP/platform/linux-arty-defconfig" "$SW/linux-arty/.config"
 "${KMAKE[@]}" olddefconfig
-for opt in CONFIG_SIFIVE_PLIC=y CONFIG_MMC_SDHCI_OF_ARASAN=y CONFIG_ENC28J60=y; do
+for opt in CONFIG_SIFIVE_PLIC=y CONFIG_MMC_SDHCI_OF_ARASAN=y CONFIG_ENC28J60=y \
+           CONFIG_SMP=y; do
     grep -qx "$opt" "$SW/linux-arty/.config" || echo "warning: $opt not set"
 done
 grep -q "^CONFIG_RISCV_ISA_C=y" "$SW/linux-arty/.config" &&
@@ -41,5 +45,9 @@ grep -q "^CONFIG_RISCV_ISA_C=y" "$SW/linux-arty/.config" &&
 cp "$SW/fw_jump.bin" "$OUT/OPENSBI.BIN"
 cp "$SW/linux-arty/arch/riscv/boot/Image" "$OUT/IMAGE.BIN"
 gzip -9 -n -c "$SW/linux-arty/arch/riscv/boot/Image" > "$OUT/IMAGEGZ.BIN"
-dtc -q -I dts -O dtb -o "$OUT/MERV.DTB" "$TOP/platform/merv-arty.dts"
+RNG_SEED="$(od -An -v -tx1 -N128 /dev/urandom | sed 's/\([0-9a-f][0-9a-f]\)/0x\1/g' | tr -s ' \n' ' ')"
+cpp -P -nostdinc -undef -x assembler-with-cpp -I "$TOP/platform" \
+    -DNUM_HARTS="${MERV_NUM_HARTS:-4}" -DRNG_SEED="$RNG_SEED" \
+    "$TOP/platform/merv-arty.dts" |
+    dtc -q -I dts -O dtb -o "$OUT/MERV.DTB"
 ls -l "$OUT"

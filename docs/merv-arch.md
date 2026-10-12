@@ -22,6 +22,8 @@ This document is the contract between the instruction set simulator
 | `HW_DIV`       | 1            | Unsigned DIV/DIVU/REM/REMU in hardware, else emulated by F mode |
 | `BARREL_SHIFT` | 0            | Single cycle shifter, else 8 or 1 bits per cycle                |
 | `RESET_VECTOR` | `0x40000000` | M mode entry point after the F mode firmware has initialized    |
+| `HART_ID`      | 0            | Hart ID (0-255) in `fconfig`, emulated `mhartid`                |
+| `AXI_EXCLUSIVE`| 0            | LR/SC and AMOs use AXI exclusive accesses (SMP)                 |
 
 ## Privilege levels
 
@@ -164,7 +166,7 @@ and `0x7c7` are unallocated and behave like any other unimplemented CSR.
 | `0x7c9` | `ftlbhi`   | W      | [31:12] VPN, [1] SUPER, [0] V                                        |
 | `0x7ca` | `ftlblo`   | W      | [31:12] PPN, [3] U, [2] X, [1] W, [0] R; writing commits the entry   |
 | `0x7cb` | `fbootvec` | RO     | `RESET_VECTOR`                                                       |
-| `0x7cc` | `fconfig`  | RO     | [7:0] `TLB_ENTRIES`, [8] `NATIVE_AMO`, [9] `HW_DIV`, [10] `BARREL_SHIFT` |
+| `0x7cc` | `fconfig`  | RO     | [7:0] `TLB_ENTRIES`, [8] `NATIVE_AMO`, [9] `HW_DIV`, [10] `BARREL_SHIFT`, [31:24] `HART_ID` |
 
 `fstatus`:
 
@@ -294,7 +296,8 @@ emulation event.  The firmware implements:
 | CSR                                                   | Behaviour                         |
 | ----------------------------------------------------- | --------------------------------- |
 | `misa`                                                | RV32IMASU, writes ignored         |
-| `mvendorid`, `marchid`, `mimpid`, `mhartid`, `mconfigptr` | read-only zero                |
+| `mvendorid`, `marchid`, `mimpid`, `mconfigptr`        | read-only zero                    |
+| `mhartid`                                             | `fconfig[31:24]`, read-only       |
 | `mstatush`, `medelegh`                                | zero, writes ignored              |
 | `menvcfg`, `menvcfgh`, `senvcfg`                      | zero, writes ignored              |
 | `mcountinhibit`                                       | zero, writes ignored              |
@@ -332,10 +335,23 @@ reservation whether it succeeds or not.  M/S trap entry also clears the
 reservation; F mode events do not, so a TLB miss between an LR and SC does not
 prevent forward progress.
 
-With `NATIVE_AMO = 1` the AMO is performed as an indivisible load, ALU
-operation and store by the state machine.  With `NATIVE_AMO = 0` an emulation
-event is raised after translation and the firmware performs an LR/op/SC loop on
-`fpaddr`.
+With `NATIVE_AMO = 1` the AMO is performed as a load, ALU operation and store
+by the state machine.  With `NATIVE_AMO = 0` an emulation event is raised after
+translation and the firmware performs an LR/op/SC loop on `fpaddr`.
+
+With `AXI_EXCLUSIVE = 0` the AXI accesses are all normal ones, and LR/SC and
+AMOs are only atomic with a single manager.  With `AXI_EXCLUSIVE = 1`, for
+atomicity between harts, LR and the load of an AMO are AXI exclusive reads (`ARLOCK`) and SC and the store of an AMO exclusive writes
+(`AWLOCK`).  An exclusive write that doesn't get `EXOKAY` was not performed:
+the SC fails (rd = 1), the AMO retries from its load.  The SC is only issued
+on the bus when the core's own reservation matches, otherwise it fails
+without a bus access.  The exclusive monitors are in the memory (on the Arty,
+one per port in the DDR3 bridge: an exclusive read sets it, a write by
+another port to the word clears it).  A subordinate without a monitor must
+give `EXOKAY` to exclusive writes, which gives single hart semantics.
+
+The ISS executes one instruction per hart in turn, so its AMOs are atomic, and
+a store by one hart clears the reservations of the others on the same word.
 
 ## Physical memory map
 
@@ -344,9 +360,9 @@ event is raised after translation and the firmware performs an LR/op/SC loop on
 | `0x00000000`  | 8KB   | F-RAM (F mode only)                           |
 | `0x40000000`  | 64KB  | Boot ROM                                      |
 | `0x80000000`  | 128MB (sim) / 256MB (Arty) | DRAM                       |
-| `0xf0000000`  | 48KB  | CLINT (`msip` 0x0, `mtimecmp` 0x4000, `mtime` 0xbff8) |
+| `0xf0000000`  | 48KB  | CLINT (`msip` 0x0 + 4h, `mtimecmp` 0x4000 + 8h, `mtime` 0xbff8) |
 | `0xf000c000`  | 4KB   | syscon / test finisher                        |
-| `0xf8000000`  | 4MB   | PLIC, context 0 = M, context 1 = S            |
+| `0xf8000000`  | 4MB   | PLIC, context 2h = M, context 2h + 1 = S of hart h |
 | `0xfffc0000`  | 64KB  | SDHCI (Arty)                                  |
 | `0xfffe0000`  | 64KB  | SPI (Arty)                                    |
 | `0xffff1000`  | 4KB   | 16550 UART, `reg-shift = 2`, 32-bit access    |

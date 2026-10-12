@@ -24,7 +24,8 @@ if(verilator_FOUND)
             "MervCoreSmall|-GTLB_ENTRIES=2 -GNATIVE_AMO=0 -GHW_DIV=0 -GBARREL_SHIFT=0"
             "MervCoreBarrel|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=1 -GBARREL_SHIFT=1"
             "MervCoreNoDiv|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=0 -GBARREL_SHIFT=0"
-            "MervCoreNoDivBarrel|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=0 -GBARREL_SHIFT=1")
+            "MervCoreNoDivBarrel|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=0 -GBARREL_SHIFT=1"
+            "MervCoreExcl|-GTLB_ENTRIES=4 -GNATIVE_AMO=1 -GHW_DIV=1 -GBARREL_SHIFT=1 -GAXI_EXCLUSIVE=1")
         string(REPLACE "|" ";" parts "${model}")
         list(GET parts 0 prefix)
         list(GET parts 1 params)

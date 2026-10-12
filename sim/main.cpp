@@ -16,6 +16,7 @@
 #include "RtlCore.h"
 #include "VMervCore.h"
 #include "VMervCoreBarrel.h"
+#include "VMervCoreExcl.h"
 #include "VMervCoreNoDiv.h"
 #include "VMervCoreNoDivBarrel.h"
 #include "VMervCoreSmall.h"
@@ -135,6 +136,7 @@ struct Options {
     unsigned dram_latency = 0;
     unsigned dram_cache_sets = 0;
     unsigned dram_cache_ways = 4;
+    bool amo_retry = false;
     bool compliance = false, stats = false, rtl = false, cosim = false;
     int64_t reset_vector = -1;
     int64_t mcycle_init = -1, minstret_init = -1;
@@ -255,32 +257,40 @@ int run_iss(const Options &opts, const RiscVELF *elf,
     Platform p(opts.core, opts.soc);
     {
         RiscVELF ffw(opts.ffw);
-        for (auto &[addr, bytes] : ffw.load_segments())
-            p.hart.load_fram(addr, bytes.data(), bytes.size());
+        for (auto &h : p.harts)
+            for (auto &[addr, bytes] : ffw.load_segments())
+                h->load_fram(addr, bytes.data(), bytes.size());
     }
     for (auto &i : images)
         p.soc.bus.load(i.addr, i.data.data(), i.data.size());
-    if (opts.mcycle_init >= 0)
-        p.hart.set_mcycle(static_cast<uint32_t>(opts.mcycle_init));
-    if (opts.minstret_init >= 0)
-        p.hart.set_minstret(static_cast<uint32_t>(opts.minstret_init));
+    for (auto &h : p.harts) {
+        if (opts.mcycle_init >= 0)
+            h->set_mcycle(static_cast<uint32_t>(opts.mcycle_init));
+        if (opts.minstret_init >= 0)
+            h->set_minstret(static_cast<uint32_t>(opts.minstret_init));
+    }
 
     Runner runner(opts, p.soc.bus, elf);
     uint64_t n = 0;
     for (; !opts.max_steps || n < opts.max_steps; ++n) {
         p.step();
         if (runner.tracing())
-            runner.record(format_step(p.hart.last_step(), n));
+            for (unsigned h = 0; h < p.harts.size(); ++h)
+                runner.record((p.harts.size() > 1 ? "[" + std::to_string(h) + "] " : "") +
+                              format_step(p.hart(h).last_step(), n));
         if (p.stopped() || runner.poll_tohost(n))
             break;
     }
 
-    auto status = finish(opts, runner, p.soc, elf, p.hart.is_halted(),
-                         p.hart.halt_reason(),
+    std::string halt_reason;
+    for (auto &h : p.harts)
+        if (h->is_halted() && halt_reason.empty())
+            halt_reason = h->halt_reason();
+    auto status = finish(opts, runner, p.soc, elf, p.halted(), halt_reason,
                          opts.max_steps && n >= opts.max_steps, "");
 
     if (opts.stats) {
-        auto &h = p.hart;
+        auto &h = p.hart();
         std::cerr << std::dec << "steps: " << h.steps
                   << "\nretired (U/S/M): " << h.retired_lower
                   << "\nretired (F): " << h.retired_f << "\nF events:";
@@ -304,10 +314,16 @@ int run_rtl(const Options &opts, const RiscVELF *elf,
     auto make = [&]<typename Model>() {
         core = std::make_unique<RtlCore<Model>>(
             soc, c.reset_vector, opts.axi_latency, opts.dram_latency,
-            opts.dram_cache_sets, opts.dram_cache_ways);
+            opts.dram_cache_sets, opts.dram_cache_ways, opts.amo_retry);
     };
     bool deflt = c.tlb_entries == 4 && c.native_amo;
-    if (deflt && c.hw_div && !c.barrel_shift)
+    if (c.axi_exclusive) {
+        if (!deflt || !c.hw_div || !c.barrel_shift)
+            throw std::runtime_error("RTL model with --axi-exclusive 1: "
+                                     "--tlb-entries 4 --native-amo 1 "
+                                     "--hw-div 1 --barrel-shift 1");
+        make.operator()<VMervCoreExcl>();
+    } else if (deflt && c.hw_div && !c.barrel_shift)
         make.operator()<VMervCore>();
     else if (deflt && c.hw_div && c.barrel_shift)
         make.operator()<VMervCoreBarrel>();
@@ -382,6 +398,7 @@ int main(int argc, char **argv)
         size_t dram_mb = opts.soc.dram_size >> 20;
         args.num("dram-mb", dram_mb, "DRAM size in MB");
         opts.soc.dram_size = dram_mb << 20;
+        args.num("harts", opts.soc.harts, "number of harts (ISS only)");
         args.num("mtime-div", opts.soc.mtime_divider,
                  "steps (ISS) or cycles (RTL) per mtime tick");
         args.str("uart-log", opts.soc.uart_log, "UART output log");
@@ -407,6 +424,11 @@ int main(int argc, char **argv)
                  "RTL model of the DRAM bridge cache sets (16 byte lines, 0: none)");
         args.num("dram-cache-ways", opts.dram_cache_ways,
                  "RTL model of the DRAM bridge cache ways");
+        args.flag01("axi-exclusive", opts.core.axi_exclusive,
+                    "RTL: LR/SC and AMOs use AXI exclusive accesses (0/1)");
+        opts.amo_retry = args.flag("amo-retry",
+                                   "RTL: fail the first exclusive write of each AMO "
+                                   "(needs --axi-exclusive 1)");
         args.str("waves", opts.waves_path, "RTL waveform (FST) output");
         if (args.flag("help", "show this help")) {
             std::cout << args.help();
@@ -432,6 +454,12 @@ int main(int argc, char **argv)
             opts.core.reset_vector = static_cast<uint32_t>(opts.reset_vector);
         auto images = load_images(elf.get(), opts.binaries);
 
+        if (opts.soc.harts < 1 || opts.soc.harts > 8)
+            throw std::runtime_error("--harts must be 1-8");
+        if (opts.amo_retry && !opts.core.axi_exclusive)
+            throw std::runtime_error("--amo-retry needs --axi-exclusive 1");
+        if ((opts.rtl || opts.cosim) && opts.soc.harts != 1)
+            throw std::runtime_error("the RTL simulation has a single hart");
         if (opts.rtl || opts.cosim) {
 #ifdef MERV_HAVE_RTL
             return run_rtl(opts, elf.get(), images);

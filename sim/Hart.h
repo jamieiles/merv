@@ -149,6 +149,8 @@ class Hart
 {
 public:
     Hart(const Config &cfg, Bus &bus);
+    Hart(const Hart &) = delete;
+    Hart &operator=(const Hart &) = delete;
 
     void reset();
     void step();
@@ -334,8 +336,8 @@ private:
 
     std::vector<TlbEntry> tlb;
 
-    bool reservation_valid = false;
-    uint32_t reservation_addr = 0;
+    // Registered with the bus, so a Hart must not move.
+    Bus::Reservation reservation;
 
     StepInfo info{};
 };

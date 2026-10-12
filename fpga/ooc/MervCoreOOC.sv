@@ -8,13 +8,15 @@ module MervCoreOOC #(
     parameter int TLB_ENTRIES = 4,
     parameter int NATIVE_AMO  = 1,
     parameter int HW_DIV      = 1,
-    parameter int BARREL_SHIFT = 0
+    parameter int BARREL_SHIFT = 0,
+    parameter int AXI_EXCLUSIVE = 0
 ) (
     input  logic        clk,
     input  logic        reset,
     output logic [31:0] axi_awaddr,
     output logic [ 2:0] axi_awsize,
     output logic [ 2:0] axi_awprot,
+    output logic        axi_awlock,
     output logic        axi_awvalid,
     input  logic        axi_awready,
     output logic [31:0] axi_wdata,
@@ -27,6 +29,7 @@ module MervCoreOOC #(
     output logic [31:0] axi_araddr,
     output logic [ 2:0] axi_arsize,
     output logic [ 2:0] axi_arprot,
+    output logic        axi_arlock,
     output logic        axi_arvalid,
     input  logic        axi_arready,
     input  logic [31:0] axi_rdata,
@@ -43,7 +46,8 @@ module MervCoreOOC #(
         .TLB_ENTRIES(TLB_ENTRIES),
         .NATIVE_AMO (NATIVE_AMO),
         .HW_DIV     (HW_DIV),
-        .BARREL_SHIFT(BARREL_SHIFT)
+        .BARREL_SHIFT(BARREL_SHIFT),
+        .AXI_EXCLUSIVE(AXI_EXCLUSIVE)
     ) core (
         .clk         (clk),
         .reset       (reset),
@@ -51,6 +55,7 @@ module MervCoreOOC #(
         .axi_awaddr  (axi_awaddr),
         .axi_awsize  (axi_awsize),
         .axi_awprot  (axi_awprot),
+        .axi_awlock  (axi_awlock),
         .axi_awvalid (axi_awvalid),
         .axi_awready (axi_awready),
         .axi_wdata   (axi_wdata),
@@ -63,6 +68,7 @@ module MervCoreOOC #(
         .axi_araddr  (axi_araddr),
         .axi_arsize  (axi_arsize),
         .axi_arprot  (axi_arprot),
+        .axi_arlock  (axi_arlock),
         .axi_arvalid (axi_arvalid),
         .axi_arready (axi_arready),
         .axi_rdata   (axi_rdata),

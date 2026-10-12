@@ -60,6 +60,28 @@ private:
 class Bus
 {
 public:
+    // An LR reservation of one of the harts sharing the bus.  A store by any
+    // other hart to the reserved word clears it, as the exclusive monitor
+    // in the DDR bridge does.
+    struct Reservation {
+        bool valid = false;
+        uint32_t addr = 0;
+    };
+
+    void add_reservation(Reservation *r)
+    {
+        reservations.push_back(r);
+    }
+
+    void snoop_store(const Reservation *self, uint32_t addr)
+    {
+        if (reservations.size() < 2)
+            return;
+        for (auto *r : reservations)
+            if (r != self && r->valid && (r->addr >> 2) == (addr >> 2))
+                r->valid = false;
+    }
+
     void add(uint32_t base, uint32_t size, Device *dev)
     {
         regions.push_back({base, size, dev});
@@ -114,6 +136,7 @@ private:
         Device *dev;
     };
     std::vector<Region> regions;
+    std::vector<Reservation *> reservations;
     uint32_t dram_base = 0;
     Ram *dram = nullptr;
 };

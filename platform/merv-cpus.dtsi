@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: GPL-2.0+
+// merv harts, for cpp (-x assembler-with-cpp) with NUM_HARTS (1-4, default
+// 1).  MERV_CPUS goes in /cpus, MERV_CLINT_IRQS and MERV_PLIC_IRQS are the
+// interrupts-extended of the CLINT (MSIP, MTIP) and the PLIC (M, S external)
+// of each hart.
+
+#ifndef NUM_HARTS
+#define NUM_HARTS 1
+#endif
+
+#define MERV_CPU(n)                                                     \
+        cpu##n: cpu@n {                                                 \
+            device_type = "cpu";                                        \
+            reg = <n>;                                                  \
+            status = "okay";                                            \
+            compatible = "jamieiles,merv", "riscv";                     \
+            riscv,isa = "rv32ima_zicsr_zifencei_zicntr";                \
+            riscv,isa-base = "rv32i";                                   \
+            riscv,isa-extensions = "i", "m", "a", "zicsr", "zifencei",  \
+                                   "zicntr";                            \
+            mmu-type = "riscv,sv32";                                    \
+                                                                        \
+            cpu##n##_intc: interrupt-controller {                       \
+                #interrupt-cells = <1>;                                 \
+                interrupt-controller;                                   \
+                compatible = "riscv,cpu-intc";                          \
+            };                                                          \
+        };
+
+#if NUM_HARTS == 1
+#define MERV_CPUS MERV_CPU(0)
+#define MERV_CLINT_IRQS <&cpu0_intc 3>, <&cpu0_intc 7>
+#define MERV_PLIC_IRQS <&cpu0_intc 11>, <&cpu0_intc 9>
+#elif NUM_HARTS == 2
+#define MERV_CPUS MERV_CPU(0) MERV_CPU(1)
+#define MERV_CLINT_IRQS <&cpu0_intc 3>, <&cpu0_intc 7>, \
+                        <&cpu1_intc 3>, <&cpu1_intc 7>
+#define MERV_PLIC_IRQS <&cpu0_intc 11>, <&cpu0_intc 9>, \
+                       <&cpu1_intc 11>, <&cpu1_intc 9>
+#elif NUM_HARTS == 3
+#define MERV_CPUS MERV_CPU(0) MERV_CPU(1) MERV_CPU(2)
+#define MERV_CLINT_IRQS <&cpu0_intc 3>, <&cpu0_intc 7>, \
+                        <&cpu1_intc 3>, <&cpu1_intc 7>, \
+                        <&cpu2_intc 3>, <&cpu2_intc 7>
+#define MERV_PLIC_IRQS <&cpu0_intc 11>, <&cpu0_intc 9>, \
+                       <&cpu1_intc 11>, <&cpu1_intc 9>, \
+                       <&cpu2_intc 11>, <&cpu2_intc 9>
+#elif NUM_HARTS == 4
+#define MERV_CPUS MERV_CPU(0) MERV_CPU(1) MERV_CPU(2) MERV_CPU(3)
+#define MERV_CLINT_IRQS <&cpu0_intc 3>, <&cpu0_intc 7>, \
+                        <&cpu1_intc 3>, <&cpu1_intc 7>, \
+                        <&cpu2_intc 3>, <&cpu2_intc 7>, \
+                        <&cpu3_intc 3>, <&cpu3_intc 7>
+#define MERV_PLIC_IRQS <&cpu0_intc 11>, <&cpu0_intc 9>, \
+                       <&cpu1_intc 11>, <&cpu1_intc 9>, \
+                       <&cpu2_intc 11>, <&cpu2_intc 9>, \
+                       <&cpu3_intc 11>, <&cpu3_intc 9>
+#else
+#error "NUM_HARTS must be 1-4"
+#endif

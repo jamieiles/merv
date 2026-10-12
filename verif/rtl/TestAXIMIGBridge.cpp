@@ -1,5 +1,6 @@
 // Copyright 2026 Jamie Iles
 // SPDX-License-Identifier: Apache-2.0
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -8,7 +9,14 @@
 
 #include <gtest/gtest.h>
 
+// Built for the SMP platform (4 harts and DMA, exclusive monitors) and with
+// BRIDGE_1HART for a single hart (the core and DMA, no monitors).
+#ifdef BRIDGE_1HART
+#include "VAXIMIGBridge1.h"
+using VAXIMIGBridge = VAXIMIGBridge1;
+#else
 #include "VAXIMIGBridge.h"
+#endif
 
 namespace
 {
@@ -121,7 +129,8 @@ protected:
             FAIL() << "timeout";
     }
 
-    // Helpers for the packed per-port fields.
+    // Helpers for the packed per-port fields, up to 64 bits wide or wider
+    // in 32-bit words.
     template <typename T>
     static void set(T &field, unsigned port, unsigned width, uint64_t v)
     {
@@ -130,11 +139,35 @@ protected:
                 ((v << (port * width)) & mask);
     }
 
+    template <std::size_t N>
+    static void set(VlWide<N> &field, unsigned port, unsigned width, uint64_t v)
+    {
+        for (unsigned b = 0; b < width; ++b) {
+            unsigned bit = port * width + b;
+            uint32_t m = 1u << (bit % 32);
+            if ((v >> b) & 1)
+                field[bit / 32] |= m;
+            else
+                field[bit / 32] &= ~m;
+        }
+    }
+
     template <typename T>
     static uint64_t get(T field, unsigned port, unsigned width)
     {
         return (static_cast<uint64_t>(field) >> (port * width)) &
                ((1ull << width) - 1);
+    }
+
+    template <std::size_t N>
+    static uint64_t get(const VlWide<N> &field, unsigned port, unsigned width)
+    {
+        uint64_t v = 0;
+        for (unsigned b = 0; b < width; ++b) {
+            unsigned bit = port * width + b;
+            v |= uint64_t((field[bit / 32] >> (bit % 32)) & 1) << b;
+        }
+        return v;
     }
 
     template <typename F>
@@ -146,13 +179,14 @@ protected:
     }
 
     // with_aw presents the first beat with the address (as the core does),
-    // b_delay holds off bready.
-    void write(uint32_t addr, const std::vector<uint32_t> &data,
-               uint8_t strb = 0xf, unsigned port = 0, bool with_aw = false,
-               unsigned b_delay = 0)
+    // b_delay holds off bready.  Returns the response.
+    unsigned write(uint32_t addr, const std::vector<uint32_t> &data,
+                   uint8_t strb = 0xf, unsigned port = 0, bool with_aw = false,
+                   unsigned b_delay = 0, bool lock = false)
     {
         set(dut.s_axi_awaddr, port, 32, addr);
         set(dut.s_axi_awlen, port, 8, data.size() - 1);
+        set(dut.s_axi_awlock, port, 1, lock);
         set(dut.s_axi_awvalid, port, 1, 1);
         size_t first = 0;
         if (with_aw) {
@@ -181,18 +215,27 @@ protected:
         set(dut.s_axi_bready, port, 1, 1);
         dut.eval();
         wait_for([&] { return get(dut.s_axi_bvalid, port, 1); });
-        EXPECT_EQ(get(dut.s_axi_bresp, port, 2), 0u);
+        unsigned resp = get(dut.s_axi_bresp, port, 2);
+        EXPECT_EQ(resp, lock ? resp & 1 : 0u);
         tick();
         set(dut.s_axi_bready, port, 1, 0);
+        set(dut.s_axi_awlock, port, 1, 0);
+        return resp;
+    }
+
+    bool write_excl(uint32_t addr, uint32_t v, unsigned port)
+    {
+        return write(addr, {v}, 0xf, port, true, 0, true) == okay_exclusive;
     }
 
     // r_delay holds off rready for each beat, the data must be held.
     std::vector<uint32_t> read(uint32_t addr, unsigned beats, unsigned port = 0,
-                               unsigned r_delay = 0)
+                               unsigned r_delay = 0, bool lock = false)
     {
         std::vector<uint32_t> out;
         set(dut.s_axi_araddr, port, 32, addr);
         set(dut.s_axi_arlen, port, 8, beats - 1);
+        set(dut.s_axi_arlock, port, 1, lock);
         set(dut.s_axi_arvalid, port, 1, 1);
         dut.eval();
         wait_for([&] { return get(dut.s_axi_arready, port, 1); });
@@ -218,11 +261,30 @@ protected:
             wait_for([&] { return get(dut.s_axi_rvalid, port, 1); });
             out.push_back(get(dut.s_axi_rdata, port, 32));
             EXPECT_EQ(get(dut.s_axi_rlast, port, 1), i == beats - 1);
+            EXPECT_EQ(get(dut.s_axi_rresp, port, 2),
+                      lock && exclusive ? okay_exclusive : 0u);
             tick();
         }
         set(dut.s_axi_rready, port, 1, 0);
+        set(dut.s_axi_arlock, port, 1, 0);
         return out;
     }
+
+    uint32_t read_excl(uint32_t addr, unsigned port)
+    {
+        return read(addr, 1, port, 0, true)[0];
+    }
+
+    static constexpr unsigned okay_exclusive = 1;
+    // The last port is the DMA port on the platform.
+#ifdef BRIDGE_1HART
+    static constexpr unsigned nports = 2;
+    static constexpr bool exclusive = false;
+#else
+    static constexpr unsigned nports = 5;
+    static constexpr bool exclusive = true;
+#endif
+    static constexpr unsigned dma = nports - 1;
 
     std::mt19937 rng{1234};
     VAXIMIGBridge dut;
@@ -442,35 +504,206 @@ TEST_F(AXIMIGBridgeTest, DMACoherent)
 
 TEST_F(AXIMIGBridgeTest, SimultaneousRequests)
 {
-    write(0x80004000, {0x11111111}, 0xf, 0);
-    write(0x80004004, {0x22222222}, 0xf, 1);
-    // Both ports request at once, both must complete.
-    set(dut.s_axi_araddr, 0, 32, 0x80004000);
-    set(dut.s_axi_araddr, 1, 32, 0x80004004);
-    set(dut.s_axi_arlen, 0, 8, 0);
-    set(dut.s_axi_arlen, 1, 8, 0);
-    dut.s_axi_arvalid = 3;
-    dut.s_axi_rready = 3;
-    uint32_t got[2] = {0, 0};
-    bool done[2] = {false, false};
-    for (int i = 0; i < 1000 && !(done[0] && done[1]); ++i) {
+    for (unsigned p = 0; p < nports; ++p)
+        write(0x80004000 + 4 * p, {0x11111111 * (p + 1)}, 0xf, p);
+    // All ports request at once, all must complete, each granted once
+    // before any is granted again.
+    unsigned order[nports], n = 0;
+    for (unsigned p = 0; p < nports; ++p) {
+        set(dut.s_axi_araddr, p, 32, 0x80004000 + 4 * p);
+        set(dut.s_axi_arlen, p, 8, 0);
+    }
+    dut.s_axi_arvalid = (1u << nports) - 1;
+    dut.s_axi_rready = (1u << nports) - 1;
+    uint32_t got[nports] = {};
+    unsigned done = 0;
+    for (int i = 0; i < 1000 && done != (1u << nports) - 1; ++i) {
         dut.eval();
-        for (unsigned p = 0; p < 2; ++p) {
+        for (unsigned p = 0; p < nports; ++p) {
             if (get(dut.s_axi_arready, p, 1))
-                ; // accepted at this edge
+                order[n++] = p;
             if (get(dut.s_axi_rvalid, p, 1)) {
                 got[p] = get(dut.s_axi_rdata, p, 32);
-                done[p] = true;
+                done |= 1u << p;
             }
         }
         uint8_t accepted = dut.s_axi_arready;
         tick();
         dut.s_axi_arvalid &= ~accepted;
     }
-    EXPECT_TRUE(done[0] && done[1]);
-    EXPECT_EQ(got[0], 0x11111111u);
-    EXPECT_EQ(got[1], 0x22222222u);
+    ASSERT_EQ(done, (1u << nports) - 1);
+    ASSERT_EQ(n, nports);
+    for (unsigned p = 0; p < nports; ++p)
+        EXPECT_EQ(got[p], 0x11111111 * (p + 1));
+    std::sort(order, order + n);
+    for (unsigned p = 0; p < nports; ++p)
+        EXPECT_EQ(order[p], p);
 }
+
+// Ports kept busy are granted in turn, AR and AW of the same port included.
+TEST_F(AXIMIGBridgeTest, RoundRobin)
+{
+    for (unsigned p = 0; p < nports; ++p) {
+        set(dut.s_axi_araddr, p, 32, 0x80004000 + 16 * p);
+        set(dut.s_axi_arlen, p, 8, 0);
+    }
+    dut.s_axi_arvalid = (1u << nports) - 1;
+    dut.s_axi_rready = (1u << nports) - 1;
+    std::vector<unsigned> grants;
+    for (int i = 0; i < 2000 && grants.size() < 4 * nports; ++i) {
+        dut.eval();
+        for (unsigned p = 0; p < nports; ++p)
+            if (get(dut.s_axi_arready, p, 1))
+                grants.push_back(p);
+        tick();
+    }
+    dut.s_axi_arvalid = 0;
+    for (int i = 0; i < 100; ++i)
+        tick();
+    dut.s_axi_rready = 0;
+    ASSERT_EQ(grants.size(), 4 * nports);
+    for (size_t i = nports; i < grants.size(); ++i)
+        EXPECT_EQ(grants[i], grants[i - nports]);
+}
+
+#ifdef BRIDGE_1HART
+// Without monitors AxLOCK is ignored: every write is performed and OKAY.
+TEST_F(AXIMIGBridgeTest, NoExclusives)
+{
+    const uint32_t a = 0x80009000;
+    write(a, {1});
+    EXPECT_FALSE(write_excl(a, 2, 0));
+    EXPECT_EQ(read(a, 1)[0], 2u);
+    EXPECT_EQ(read_excl(a, 0), 2u);
+    write(a, {3}, 0xf, dma);
+    EXPECT_FALSE(write_excl(a, 4, 0));
+    EXPECT_EQ(read(a, 1)[0], 4u);
+}
+#else
+TEST_F(AXIMIGBridgeTest, ExclusiveSuccess)
+{
+    const uint32_t a = 0x80009000;
+    write(a, {41});
+    EXPECT_EQ(read_excl(a, 0), 41u);
+    EXPECT_TRUE(write_excl(a, 42, 0));
+    EXPECT_EQ(read(a, 1)[0], 42u);
+    // The monitor was consumed.
+    EXPECT_FALSE(write_excl(a, 43, 0));
+    EXPECT_EQ(read(a, 1)[0], 42u);
+}
+
+TEST_F(AXIMIGBridgeTest, ExclusiveWithoutMonitor)
+{
+    const uint32_t a = 0x80009010;
+    write(a, {1});
+    EXPECT_FALSE(write_excl(a, 2, 0));
+    // A monitor for another word doesn't help.
+    read_excl(a + 4, 0);
+    EXPECT_FALSE(write_excl(a, 2, 0));
+    EXPECT_EQ(read(a, 1)[0], 1u);
+    // Nor does another port's.
+    read_excl(a, 1);
+    EXPECT_FALSE(write_excl(a, 2, 0));
+    EXPECT_TRUE(write_excl(a, 3, 1));
+    EXPECT_EQ(read(a, 1)[0], 3u);
+}
+
+TEST_F(AXIMIGBridgeTest, ExclusiveClearedByOtherPort)
+{
+    const uint32_t a = 0x80009020;
+    write(a, {1});
+    read_excl(a, 0);
+    write(a, {2}, 0x1, 2);
+    EXPECT_FALSE(write_excl(a, 5, 0));
+    EXPECT_EQ(read(a, 1)[0], 2u);
+}
+
+TEST_F(AXIMIGBridgeTest, ExclusiveKeptByOwnWriteAndOtherWords)
+{
+    const uint32_t a = 0x80009030;
+    read_excl(a, 0);
+    write(a, {7}, 0xf, 0);
+    write(a + 4, {8}, 0xf, 1);
+    write(a - 4, {9}, 0xf, dma);
+    read(a, 1, 3);
+    EXPECT_TRUE(write_excl(a, 10, 0));
+    EXPECT_EQ(read(a, 1)[0], 10u);
+}
+
+TEST_F(AXIMIGBridgeTest, ExclusiveClearedByDMABurst)
+{
+    const uint32_t a = 0x80009048;
+    read_excl(a, 0);
+    std::vector<uint32_t> burst(8, 0xd0d0d0d0);
+    write(0x80009040, burst, 0xf, dma);
+    EXPECT_FALSE(write_excl(a, 1, 0));
+    EXPECT_EQ(read(a, 1)[0], 0xd0d0d0d0u);
+}
+
+// Two ports both hold a monitor for the word, the first exclusive write
+// wins and the other fails.
+TEST_F(AXIMIGBridgeTest, ExclusiveRace)
+{
+    const uint32_t a = 0x80009060;
+    write(a, {100});
+    read_excl(a, 0);
+    read_excl(a, 1);
+    EXPECT_TRUE(write_excl(a, 101, 1));
+    EXPECT_FALSE(write_excl(a, 101, 0));
+    EXPECT_EQ(read_excl(a, 0), 101u);
+    EXPECT_TRUE(write_excl(a, 102, 0));
+    EXPECT_EQ(read(a, 1)[0], 102u);
+}
+
+#endif
+
+#ifndef BRIDGE_1HART
+// Random interleaved exclusive and normal accesses from all ports against a
+// model of the monitors.
+TEST_F(AXIMIGBridgeTest, RandomExclusive)
+{
+    std::map<uint32_t, uint32_t> ref;
+    struct Mon {
+        bool valid = false;
+        uint32_t addr = 0;
+    } mon[nports];
+    std::uniform_int_distribution<uint32_t> word(0, 7), val;
+    for (int i = 0; i < 3000; ++i) {
+        // Few words so that the ports collide.
+        uint32_t a = 0x8000a000 + word(rng) * 4;
+        unsigned port = val(rng) % nports;
+        uint32_t v = val(rng);
+        switch (val(rng) % 4) {
+        case 0:
+            EXPECT_EQ(read_excl(a, port), ref[a]);
+            mon[port] = {true, a};
+            break;
+        case 1: {
+            bool expect = mon[port].valid && mon[port].addr == a;
+            EXPECT_EQ(write_excl(a, v, port), expect) << i;
+            if (expect) {
+                ref[a] = v;
+                for (unsigned p = 0; p < nports; ++p)
+                    if (mon[p].addr == a)
+                        mon[p].valid = false;
+            }
+            break;
+        }
+        case 2:
+            write(a, {v}, 0xf, port, val(rng) & 1);
+            ref[a] = v;
+            for (unsigned p = 0; p < nports; ++p)
+                if (p != port && mon[p].addr == a)
+                    mon[p].valid = false;
+            break;
+        default:
+            EXPECT_EQ(read(a, 1, port)[0], ref[a]);
+            break;
+        }
+    }
+}
+
+#endif
 
 TEST_F(AXIMIGBridgeTest, Random)
 {
@@ -479,7 +712,7 @@ TEST_F(AXIMIGBridgeTest, Random)
     for (int i = 0; i < 2000; ++i) {
         // 1KB of addresses over a 256 byte cache: lots of evictions.
         uint32_t a = 0x80000000 + word(rng) * 4;
-        unsigned port = val(rng) & 1;
+        unsigned port = val(rng) % nports;
         if (val(rng) & 1) {
             uint8_t strb = (val(rng) & 0xf) | 1;
             uint32_t v = val(rng);

@@ -29,7 +29,8 @@ set(MERV_RTL_TEST_CONFIGS
     "rtl-default|--cosim"
     "rtl-small|--cosim --tlb-entries 2 --native-amo 0 --hw-div 0"
     "rtl-barrel|--cosim --barrel-shift 1"
-    "rtl-nodiv-barrel|--cosim --hw-div 0 --barrel-shift 1")
+    "rtl-nodiv-barrel|--cosim --hw-div 0 --barrel-shift 1"
+    "rtl-excl|--cosim --barrel-shift 1 --axi-exclusive 1 --amo-retry")
 
 add_subdirectory(tests)
 add_subdirectory(verif)

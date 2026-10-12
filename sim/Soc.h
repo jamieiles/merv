@@ -17,6 +17,7 @@ struct SocOptions {
     std::string uart_log;
     bool uart_echo = true;
     bool uart_input = false;
+    unsigned harts = 1;
 };
 
 struct IrqLines {
@@ -33,7 +34,8 @@ public:
     explicit Soc(const SocOptions &opts)
         : dram(opts.dram_size),
           bootrom(merv::bootrom_size),
-          clint(opts.mtime_divider),
+          clint(opts.mtime_divider, opts.harts),
+          plic(opts.harts),
           uart(opts.uart_log, opts.uart_echo, opts.uart_input)
     {
         bus.set_dram(merv::dram_base, &dram);
@@ -52,10 +54,11 @@ public:
             uart.poll_input();
     }
 
-    IrqLines irqs()
+    IrqLines irqs(unsigned hart = 0)
     {
         plic.set_source(uart_irq, uart.irq());
-        return {plic.irq(0), plic.irq(1), clint.mtip(), clint.msip()};
+        return {plic.irq(2 * hart), plic.irq(2 * hart + 1), clint.mtip(hart),
+                clint.msip(hart)};
     }
 
     bool stopped() const

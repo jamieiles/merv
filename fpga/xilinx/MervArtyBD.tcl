@@ -1,10 +1,11 @@
 # Copyright 2026 Jamie Iles
 # SPDX-License-Identifier: Apache-2.0
 #
-# IP Integrator block design for merv on the Arty S7-50:
+# IP Integrator block design for merv on the Arty S7-50 with $MERV_NUM_HARTS
+# (1-4, default 4) harts h:
 #
-#   MervCoreAXI_0/m_axi -> axi_interconnect_0 -> peripherals
-#   MervCoreAXI_0/m_dram_axi -> MIGBridgeAXI_0/s_axi (point to point)
+#   MervCoreAXI_h/m_axi -> axi_interconnect_0/S0h_AXI -> peripherals
+#   MervCoreAXI_h/m_dram_axi -> MIGBridgeAXI_0/s_axi{,1,2,3} (point to point)
 #   SDHCIAXI_0 DMA -> MIGBridgeAXI_0/s_dma_axi (point to point)
 #
 #   0x40000000  64KB   boot ROM (BRAM)
@@ -37,6 +38,10 @@ create_bd_intf_port -mode Master -vlnv xilinx.com:interface:uart_rtl:1.0 uart_rt
 # The DDR3 controller is outside of the block design (native MIG interface)
 # and provides the system clock and calibration status.
 create_bd_port -dir I -type clk -freq_hz 81247969 ui_clk
+# The cores' clock: the UI clock, or with $MERV_CORE_CLK2X=1 twice it and
+# phase aligned (fpga/xilinx/Top.v).
+set core_clk2x [expr {[info exists ::env(MERV_CORE_CLK2X)] && $::env(MERV_CORE_CLK2X)}]
+create_bd_port -dir I -type clk -freq_hz [expr {$core_clk2x ? 162495938 : 81247969}] core_clk
 create_bd_port -dir I -type clk -freq_hz 10140625 clint_refclk
 create_bd_port -dir I ddr_ready
 create_bd_port -dir I ddr_calib_complete
@@ -83,20 +88,39 @@ create_bd_port -dir O dbg_seip
 create_bd_port -dir O dbg_mtip
 create_bd_port -dir O dbg_sdhci_irq
 
+set num_harts 4
+if { [info exists ::env(MERV_NUM_HARTS)] } {
+    set num_harts $::env(MERV_NUM_HARTS)
+}
+if { $num_harts < 1 || $num_harts > 4 } {
+    error "MERV_NUM_HARTS must be 1-4"
+}
+
+# Per hart suffixes of the CLINT/PLIC interrupt pins and the bridge ports.
+proc hart_sfx { h } { return [expr {$h == 0 ? "" : "_$h"}] }
+proc dram_port { h } { return [expr {$h == 0 ? "s_axi" : "s_axi$h"}] }
+
 # Cells
-set core [add_module MervCoreAXI MervCoreAXI_0]
-# The number of TLB entries and the barrel shifter can be overridden with
-# $MERV_TLB_ENTRIES and $MERV_BARREL_SHIFT.
-if { [info exists ::env(MERV_TLB_ENTRIES)] } {
-    set_property CONFIG.TLB_ENTRIES $::env(MERV_TLB_ENTRIES) $core
+for {set h 0} {$h < $num_harts} {incr h} {
+    set core [add_module MervCoreAXI MervCoreAXI_$h]
+    set_property CONFIG.HART_ID $h $core
+    # Exclusive accesses for atomics between harts, a single hart doesn't
+    # need them (and the bridge then has no monitor).
+    set_property CONFIG.AXI_EXCLUSIVE [expr {$num_harts > 1}] $core
+    set_property CONFIG.CLK2X $core_clk2x $core
+    # The number of TLB entries and the barrel shifter can be overridden
+    # with $MERV_TLB_ENTRIES and $MERV_BARREL_SHIFT.
+    if { [info exists ::env(MERV_TLB_ENTRIES)] } {
+        set_property CONFIG.TLB_ENTRIES $::env(MERV_TLB_ENTRIES) $core
+    }
+    if { [info exists ::env(MERV_BARREL_SHIFT)] } {
+        set_property CONFIG.BARREL_SHIFT $::env(MERV_BARREL_SHIFT) $core
+    }
 }
-if { [info exists ::env(MERV_BARREL_SHIFT)] } {
-    set_property CONFIG.BARREL_SHIFT $::env(MERV_BARREL_SHIFT) $core
-}
-add_module MervCLINT MervCLINT_0
+set_property CONFIG.NUM_HARTS $num_harts [add_module MervCLINT MervCLINT_0]
 add_module SDHCIAXI SDHCIAXI_0
-add_module PLICAXI PLICAXI_0
-add_module MIGBridgeAXI MIGBridgeAXI_0
+set_property CONFIG.NUM_HARTS $num_harts [add_module PLICAXI PLICAXI_0]
+set_property CONFIG.NUM_HARTS $num_harts [add_module MIGBridgeAXI MIGBridgeAXI_0]
 
 set axi_quad_spi_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_quad_spi:3.2 axi_quad_spi_0 ]
 set_property -dict [ list \
@@ -120,15 +144,17 @@ set_property -dict [ list CONFIG.DATA_WIDTH {32} CONFIG.SINGLE_PORT_BRAM {1} ] $
 
 create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_ui_clk
 
-# A single manager (the core) with one transaction in flight so the
-# interconnect only needs to decode: an area optimized AXI Interconnect is
-# much smaller than a SmartConnect.  DRAM doesn't go through it, its address
-# arbitration costs a cycle on every access.
+# The cores each have one transaction in flight and MMIO is rare, so an
+# area optimized (shared access) AXI Interconnect is much smaller than a
+# SmartConnect.  DRAM doesn't go through it, its address arbitration costs a
+# cycle on every access.
 set axi_interconnect_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_interconnect:2.1 axi_interconnect_0 ]
-set_property -dict [ list CONFIG.NUM_SI {1} CONFIG.NUM_MI {6} CONFIG.STRATEGY {1} ] $axi_interconnect_0
+set_property -dict [ list CONFIG.NUM_SI $num_harts CONFIG.NUM_MI {6} CONFIG.STRATEGY {1} ] $axi_interconnect_0
 
 # Interface connections
-connect_bd_intf_net [get_bd_intf_pins MervCoreAXI_0/m_axi] [get_bd_intf_pins axi_interconnect_0/S00_AXI]
+for {set h 0} {$h < $num_harts} {incr h} {
+    connect_bd_intf_net [get_bd_intf_pins MervCoreAXI_$h/m_axi] [get_bd_intf_pins axi_interconnect_0/S0${h}_AXI]
+}
 connect_bd_intf_net [get_bd_intf_ports uart_rtl_0] [get_bd_intf_pins axi_uart16550_0/UART]
 connect_bd_intf_net [get_bd_intf_ports bootrom_bram] [get_bd_intf_pins bootrom_ctrl/BRAM_PORTA]
 connect_bd_intf_net [get_bd_intf_pins axi_interconnect_0/M00_AXI] [get_bd_intf_pins axi_uart16550_0/S_AXI]
@@ -137,16 +163,18 @@ connect_bd_intf_net [get_bd_intf_pins axi_interconnect_0/M02_AXI] [get_bd_intf_p
 connect_bd_intf_net [get_bd_intf_pins axi_interconnect_0/M03_AXI] [get_bd_intf_pins MervCLINT_0/s_axi]
 connect_bd_intf_net [get_bd_intf_pins axi_interconnect_0/M04_AXI] [get_bd_intf_pins PLICAXI_0/s_axi]
 connect_bd_intf_net [get_bd_intf_pins axi_interconnect_0/M05_AXI] [get_bd_intf_pins SDHCIAXI_0/s_axi]
-# The core's DRAM accesses (split off in MervCoreAXI) and SDMA from the SD
+# The cores' DRAM accesses (split off in MervCoreAXI) and SDMA from the SD
 # host controller go straight into the DRAM bridge, point to point rather than
-# through the interconnect.  Both go through the bridge's cache so DMA is
-# coherent with the CPU.
-connect_bd_intf_net [get_bd_intf_pins MervCoreAXI_0/m_dram_axi] [get_bd_intf_pins MIGBridgeAXI_0/s_axi]
+# through the interconnect.  All go through the bridge's cache so DMA is
+# coherent with the CPUs, and its exclusive monitors implement the atomics.
+for {set h 0} {$h < $num_harts} {incr h} {
+    connect_bd_intf_net [get_bd_intf_pins MervCoreAXI_$h/m_dram_axi] [get_bd_intf_pins MIGBridgeAXI_0/[dram_port $h]]
+}
 connect_bd_intf_net [get_bd_intf_pins SDHCIAXI_0/m_axi] [get_bd_intf_pins MIGBridgeAXI_0/s_dma_axi]
 
 # Clocks and resets
 connect_bd_net [get_bd_ports ui_clk] \
-    [get_bd_pins MervCoreAXI_0/clk] \
+    [get_bd_pins MervCoreAXI_*/clk] \
     [get_bd_pins MervCLINT_0/s_axi_aclk] \
     [get_bd_pins SDHCIAXI_0/s_axi_aclk] \
     [get_bd_pins PLICAXI_0/s_axi_aclk] \
@@ -157,15 +185,16 @@ connect_bd_net [get_bd_ports ui_clk] \
     [get_bd_pins bootrom_ctrl/s_axi_aclk] \
     [get_bd_pins rst_ui_clk/slowest_sync_clk] \
     [get_bd_pins axi_interconnect_0/ACLK] \
-    [get_bd_pins axi_interconnect_0/S00_ACLK] \
+    [get_bd_pins axi_interconnect_0/S0*_ACLK] \
     [get_bd_pins axi_interconnect_0/M00_ACLK] [get_bd_pins axi_interconnect_0/M01_ACLK] \
     [get_bd_pins axi_interconnect_0/M02_ACLK] [get_bd_pins axi_interconnect_0/M03_ACLK] \
     [get_bd_pins axi_interconnect_0/M04_ACLK] [get_bd_pins axi_interconnect_0/M05_ACLK]
+connect_bd_net [get_bd_ports core_clk] [get_bd_pins MervCoreAXI_*/core_clk]
 connect_bd_net [get_bd_ports clint_refclk] [get_bd_pins MervCLINT_0/refclk]
 connect_bd_net [get_bd_ports ddr_ready] [get_bd_pins rst_ui_clk/dcm_locked]
 connect_bd_net [get_bd_ports reset_rtl_0] [get_bd_pins rst_ui_clk/ext_reset_in]
 connect_bd_net [get_bd_pins rst_ui_clk/interconnect_aresetn] [get_bd_pins axi_interconnect_0/ARESETN]
-connect_bd_net [get_bd_pins rst_ui_clk/peripheral_aresetn] [get_bd_pins axi_interconnect_0/S00_ARESETN] \
+connect_bd_net [get_bd_pins rst_ui_clk/peripheral_aresetn] [get_bd_pins axi_interconnect_0/S0*_ARESETN] \
     [get_bd_pins axi_interconnect_0/M00_ARESETN] [get_bd_pins axi_interconnect_0/M01_ARESETN] \
     [get_bd_pins axi_interconnect_0/M02_ARESETN] [get_bd_pins axi_interconnect_0/M03_ARESETN] \
     [get_bd_pins axi_interconnect_0/M04_ARESETN] [get_bd_pins axi_interconnect_0/M05_ARESETN]
@@ -177,14 +206,20 @@ connect_bd_net [get_bd_pins rst_ui_clk/peripheral_aresetn] \
     [get_bd_pins axi_uart16550_0/s_axi_aresetn] \
     [get_bd_pins bootrom_ctrl/s_axi_aresetn]
 connect_bd_net [get_bd_pins rst_ui_clk/peripheral_reset] \
-    [get_bd_pins MervCoreAXI_0/reset] \
+    [get_bd_pins MervCoreAXI_*/reset] \
     [get_bd_pins MIGBridgeAXI_0/reset]
 
-# Interrupts
-connect_bd_net [get_bd_pins MervCLINT_0/mtime_irq] [get_bd_pins MervCoreAXI_0/mtip] [get_bd_ports dbg_mtip]
-connect_bd_net [get_bd_pins MervCLINT_0/msip] [get_bd_pins MervCoreAXI_0/msip]
-connect_bd_net [get_bd_pins PLICAXI_0/meip] [get_bd_pins MervCoreAXI_0/meip] [get_bd_ports dbg_meip]
-connect_bd_net [get_bd_pins PLICAXI_0/seip] [get_bd_pins MervCoreAXI_0/seip] [get_bd_ports dbg_seip]
+# Interrupts, the debug ports show hart 0's.
+for {set h 0} {$h < $num_harts} {incr h} {
+    set sfx [hart_sfx $h]
+    connect_bd_net [get_bd_pins MervCLINT_0/mtime_irq$sfx] [get_bd_pins MervCoreAXI_$h/mtip]
+    connect_bd_net [get_bd_pins MervCLINT_0/msip$sfx] [get_bd_pins MervCoreAXI_$h/msip]
+    connect_bd_net [get_bd_pins PLICAXI_0/meip$sfx] [get_bd_pins MervCoreAXI_$h/meip]
+    connect_bd_net [get_bd_pins PLICAXI_0/seip$sfx] [get_bd_pins MervCoreAXI_$h/seip]
+}
+connect_bd_net [get_bd_pins MervCLINT_0/mtime_irq] [get_bd_ports dbg_mtip]
+connect_bd_net [get_bd_pins PLICAXI_0/meip] [get_bd_ports dbg_meip]
+connect_bd_net [get_bd_pins PLICAXI_0/seip] [get_bd_ports dbg_seip]
 connect_bd_net [get_bd_pins axi_quad_spi_0/ip2intc_irpt] [get_bd_pins PLICAXI_0/spi_irq]
 connect_bd_net [get_bd_pins axi_uart16550_0/ip2intc_irpt] [get_bd_pins PLICAXI_0/uart_irq]
 connect_bd_net [get_bd_ports eth_int] [get_bd_pins PLICAXI_0/eth_int_n]
@@ -216,14 +251,16 @@ foreach pin {dbg_trap_cause dbg_trap_epc dbg_trap_tval} {
 }
 
 # Address map
-set core_space [get_bd_addr_spaces MervCoreAXI_0/m_axi]
-assign_bd_address -offset 0x40000000 -range 0x00010000 -target_address_space $core_space [get_bd_addr_segs bootrom_ctrl/S_AXI/Mem0] -force
-assign_bd_address -offset 0x80000000 -range 0x10000000 -target_address_space [get_bd_addr_spaces MervCoreAXI_0/m_dram_axi] [get_bd_addr_segs MIGBridgeAXI_0/s_axi/reg0] -force
-assign_bd_address -offset 0xF0000000 -range 0x00010000 -target_address_space $core_space [get_bd_addr_segs MervCLINT_0/s_axi/reg0] -force
-assign_bd_address -offset 0xF8000000 -range 0x00400000 -target_address_space $core_space [get_bd_addr_segs PLICAXI_0/s_axi/reg0] -force
-assign_bd_address -offset 0xFFFC0000 -range 0x00010000 -target_address_space $core_space [get_bd_addr_segs SDHCIAXI_0/s_axi/reg0] -force
-assign_bd_address -offset 0xFFFE0000 -range 0x00010000 -target_address_space $core_space [get_bd_addr_segs axi_quad_spi_0/AXI_LITE/Reg] -force
-assign_bd_address -offset 0xFFFF0000 -range 0x00010000 -target_address_space $core_space [get_bd_addr_segs axi_uart16550_0/S_AXI/Reg] -force
+for {set h 0} {$h < $num_harts} {incr h} {
+    set core_space [get_bd_addr_spaces MervCoreAXI_$h/m_axi]
+    assign_bd_address -offset 0x40000000 -range 0x00010000 -target_address_space $core_space [get_bd_addr_segs bootrom_ctrl/S_AXI/Mem0] -force
+    assign_bd_address -offset 0x80000000 -range 0x10000000 -target_address_space [get_bd_addr_spaces MervCoreAXI_$h/m_dram_axi] [get_bd_addr_segs MIGBridgeAXI_0/[dram_port $h]/reg0] -force
+    assign_bd_address -offset 0xF0000000 -range 0x00010000 -target_address_space $core_space [get_bd_addr_segs MervCLINT_0/s_axi/reg0] -force
+    assign_bd_address -offset 0xF8000000 -range 0x00400000 -target_address_space $core_space [get_bd_addr_segs PLICAXI_0/s_axi/reg0] -force
+    assign_bd_address -offset 0xFFFC0000 -range 0x00010000 -target_address_space $core_space [get_bd_addr_segs SDHCIAXI_0/s_axi/reg0] -force
+    assign_bd_address -offset 0xFFFE0000 -range 0x00010000 -target_address_space $core_space [get_bd_addr_segs axi_quad_spi_0/AXI_LITE/Reg] -force
+    assign_bd_address -offset 0xFFFF0000 -range 0x00010000 -target_address_space $core_space [get_bd_addr_segs axi_uart16550_0/S_AXI/Reg] -force
+}
 assign_bd_address -offset 0x80000000 -range 0x10000000 -target_address_space [get_bd_addr_spaces SDHCIAXI_0/m_axi] [get_bd_addr_segs MIGBridgeAXI_0/s_dma_axi/reg0] -force
 
 validate_bd_design

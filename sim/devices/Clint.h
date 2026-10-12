@@ -2,15 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <vector>
+
 #include "../Bus.h"
 
-// SiFive compatible CLINT for a single hart: msip at 0x0, mtimecmp at 0x4000
-// and mtime at 0xbff8.  mtime increments every `divider` calls to tick() so
-// that simulated time is a deterministic function of instructions executed.
+// SiFive compatible CLINT: msip at 0x0 + 4 * hart, mtimecmp at
+// 0x4000 + 8 * hart and mtime at 0xbff8.  mtime increments every `divider`
+// calls to tick() so that simulated time is a deterministic function of
+// instructions executed.
 class Clint : public Device
 {
 public:
-    explicit Clint(unsigned divider) : divider(divider)
+    Clint(unsigned divider, unsigned harts)
+        : divider(divider), msip_reg(harts, 0), mtimecmp(harts, ~0ULL)
     {
     }
 
@@ -22,14 +26,14 @@ public:
         }
     }
 
-    bool mtip() const
+    bool mtip(unsigned hart) const
     {
-        return mtime >= mtimecmp;
+        return mtime >= mtimecmp[hart];
     }
 
-    bool msip() const
+    bool msip(unsigned hart) const
     {
-        return msip_reg & 1;
+        return msip_reg[hart] & 1;
     }
 
     uint64_t get_mtime() const
@@ -41,31 +45,36 @@ public:
     {
         if (size != 4)
             return false;
-        switch (offset) {
-        case 0x0: val = msip_reg; return true;
-        case 0x4000: val = static_cast<uint32_t>(mtimecmp); return true;
-        case 0x4004: val = static_cast<uint32_t>(mtimecmp >> 32); return true;
-        case 0xbff8: val = static_cast<uint32_t>(mtime); return true;
-        case 0xbffc: val = static_cast<uint32_t>(mtime >> 32); return true;
-        default: val = 0; return true;
+        val = 0;
+        if (auto h = offset / 4; offset < 0x4000 && h < msip_reg.size()) {
+            val = msip_reg[h];
+        } else if (auto h = (offset - 0x4000) / 8;
+                   offset >= 0x4000 && h < mtimecmp.size()) {
+            val = static_cast<uint32_t>(mtimecmp[h] >> (offset & 4 ? 32 : 0));
+        } else if (offset == 0xbff8) {
+            val = static_cast<uint32_t>(mtime);
+        } else if (offset == 0xbffc) {
+            val = static_cast<uint32_t>(mtime >> 32);
         }
+        return true;
     }
 
     bool write(uint32_t offset, unsigned size, uint32_t val) override
     {
         if (size != 4)
             return false;
-        switch (offset) {
-        case 0x0: msip_reg = val & 1; break;
-        case 0x4000: mtimecmp = (mtimecmp & ~0xffffffffULL) | val; break;
-        case 0x4004:
-            mtimecmp = (mtimecmp & 0xffffffffULL) | (uint64_t(val) << 32);
-            break;
-        case 0xbff8: mtime = (mtime & ~0xffffffffULL) | val; break;
-        case 0xbffc:
+        if (auto h = offset / 4; offset < 0x4000 && h < msip_reg.size()) {
+            msip_reg[h] = val & 1;
+        } else if (auto h = (offset - 0x4000) / 8;
+                   offset >= 0x4000 && h < mtimecmp.size()) {
+            if (offset & 4)
+                mtimecmp[h] = (mtimecmp[h] & 0xffffffffULL) | (uint64_t(val) << 32);
+            else
+                mtimecmp[h] = (mtimecmp[h] & ~0xffffffffULL) | val;
+        } else if (offset == 0xbff8) {
+            mtime = (mtime & ~0xffffffffULL) | val;
+        } else if (offset == 0xbffc) {
             mtime = (mtime & 0xffffffffULL) | (uint64_t(val) << 32);
-            break;
-        default: break;
         }
         return true;
     }
@@ -73,7 +82,7 @@ public:
 private:
     unsigned divider;
     unsigned count = 0;
-    uint32_t msip_reg = 0;
+    std::vector<uint32_t> msip_reg;
     uint64_t mtime = 0;
-    uint64_t mtimecmp = ~0ULL;
+    std::vector<uint64_t> mtimecmp;
 };
