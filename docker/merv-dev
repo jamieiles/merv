@@ -10,15 +10,22 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOP="$(dirname "$HERE")"
 IMAGE="${MERV_DEV_IMAGE:-merv-dev}"
 
-if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
-    docker build -t "$IMAGE" "$HERE"
+TOOL=docker
+if [[ "$OSTYPE" =~ "darwin" ]]; then
+    TOOL=container
+    TOOL_ARGS="--cpus 10 --memory 20G"
+    DEFAULT_INTERACTIVE_FLAGS="-it"
+fi
+
+if ! $TOOL image inspect "$IMAGE" > /dev/null 2>&1; then
+    $TOOL build -t "$IMAGE" "$HERE"
 fi
 
 if [ -z ${DOCKER_INTERACTIVE_FLAGS+x} ]; then
     DOCKER_INTERACTIVE_FLAGS="-it"
 fi
 
-exec docker run --rm $DOCKER_INTERACTIVE_FLAGS \
+exec $TOOL run $TOOL_ARGS --rm $DOCKER_INTERACTIVE_FLAGS \
     -u "$(id -u):$(id -g)" \
     -v "$TOP:$TOP" -v "$HOME/src/linux:$HOME/src/linux:ro" \
     -w "$PWD" "$IMAGE" "${@:-bash}"
